@@ -1,61 +1,61 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
-import { 
-  Brain, 
-  MessageSquare, 
-  TrendingUp, 
-  Target, 
-  Shield, 
-  Zap,
+import {
+  Brain,
+  Link2,
+  Linkedin,
+  Twitter,
+  Sliders,
+  RefreshCw,
+  Layers,
   BarChart3,
-  Users,
-  Clock
+  Wand2,
 } from "lucide-react";
 
 const features = [
   {
+    icon: Link2,
+    title: "Any Link, Instantly",
+    description: "Paste a YouTube video, podcast episode, blog post, or article URL and Repurpost handles the rest — no copy-pasting needed.",
+  },
+  {
     icon: Brain,
-    title: "AI-Powered Transcription",
-    description: "Convert speech to text with 99.5% accuracy using advanced machine learning models.",
+    title: "Deep Content Analysis",
+    description: "Our AI reads the full transcript, article, or show notes to extract the most impactful ideas, stories, and insights.",
   },
   {
-    icon: MessageSquare,
-    title: "Sentiment Analysis",
-    description: "Understand customer emotions and satisfaction levels throughout every conversation.",
+    icon: Linkedin,
+    title: "LinkedIn-Optimized Posts",
+    description: "Generate long-form LinkedIn posts with hooks, storytelling structure, and hashtags tuned for maximum reach and engagement.",
   },
   {
-    icon: TrendingUp,
-    title: "Performance Insights",
-    description: "Track team performance with detailed analytics on talk time, conversion rates, and more.",
+    icon: Twitter,
+    title: "Twitter Threads",
+    description: "Auto-generate punchy tweet threads that break down complex ideas into scroll-stopping, shareable content.",
   },
   {
-    icon: Target,
-    title: "Keyword Tracking",
-    description: "Monitor competitor mentions, objections, and key topics automatically.",
+    icon: Sliders,
+    title: "Tone Customization",
+    description: "Choose from Thought Leader, Casual, Storytelling, Data-Driven, or Contrarian — or mix and match to fit your brand.",
   },
   {
-    icon: Shield,
-    title: "Compliance Monitoring",
-    description: "Ensure regulatory compliance with automated script adherence and flagging.",
+    icon: Wand2,
+    title: "LinkedIn Persona Matching",
+    description: "Link your LinkedIn profile and let AI analyze your past posts to generate content that sounds exactly like you.",
   },
   {
-    icon: Zap,
-    title: "Real-time Coaching",
-    description: "Get live suggestions and prompts during calls to improve outcomes.",
+    icon: RefreshCw,
+    title: "One-Click Regeneration",
+    description: "Not happy with the output? Regenerate with a different angle, tone, or length with a single click.",
+  },
+  {
+    icon: Layers,
+    title: "Multi-Format Output",
+    description: "From a single source, get a LinkedIn post, a Twitter thread, a newsletter blurb, and a short-form hook — all at once.",
   },
   {
     icon: BarChart3,
-    title: "Custom Dashboards",
-    description: "Build personalized dashboards with the metrics that matter most to your business.",
-  },
-  {
-    icon: Users,
-    title: "Team Collaboration",
-    description: "Share insights, comments, and best practices across your entire sales team.",
-  },
-  {
-    icon: Clock,
-    title: "Automated Summaries",
-    description: "Generate call summaries and action items automatically after each conversation.",
+    title: "Post Performance Tracking",
+    description: "Connect your accounts to see which repurposed posts drive the most impressions, clicks, and followers over time.",
   },
 ];
 
@@ -64,12 +64,12 @@ export function Features() {
     <section id="features" className="py-20 lg:py-32">
       <div className="container mx-auto max-w-6xl px-4">
         <div className="text-center space-y-4 mb-16">
-          <h2 className="text-3xl md:text-4xl lg:text-5xl">
-            Everything You Need to Excel
+          <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold">
+            Everything You Need to Build in Public
           </h2>
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-            Our AI-powered platform provides comprehensive call analytics to help you understand, 
-            optimize, and scale your customer conversations.
+            Stop spending hours writing posts from scratch. Repurpost turns the content you already
+            consume into the audience you've always wanted.
           </p>
         </div>
 
@@ -77,7 +77,7 @@ export function Features() {
           {features.map((feature, index) => {
             const Icon = feature.icon;
             return (
-              <Card key={index} className="border-border/50 hover:border-border transition-colors">
+              <Card key={index} className="border-border/50 hover:border-primary/40 hover:shadow-md transition-all duration-200">
                 <CardHeader>
                   <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center mb-4">
                     <Icon className="w-6 h-6 text-primary" />
