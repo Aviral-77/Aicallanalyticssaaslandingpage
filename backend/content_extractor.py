@@ -9,11 +9,14 @@ from typing import Literal
 
 import httpx
 import trafilatura
+from langsmith import traceable
 from youtube_transcript_api import (
     NoTranscriptFound,
     TranscriptsDisabled,
     YouTubeTranscriptApi,
 )
+
+from logger import Timer, extraction_log
 
 SourceType = Literal["youtube", "blog", "article", "podcast"]
 
@@ -85,9 +88,12 @@ async def _fetch_youtube_title(url: str, video_id: str) -> str:
     return "YouTube Video"
 
 
+@traceable(name="extract_youtube")
 async def extract_youtube(url: str) -> ExtractedContent:
     """Extract transcript and title from a YouTube video URL."""
+    timer = Timer()
     video_id = _extract_video_id(url)
+    extraction_log.info("youtube_extract | video_id=%s | url=%s", video_id, url)
 
     # Run sync transcript API in a thread to avoid blocking the event loop
     transcript, title = await asyncio.gather(
@@ -96,9 +102,16 @@ async def extract_youtube(url: str) -> ExtractedContent:
     )
 
     # Truncate to avoid huge token bills on very long videos
+    truncated = len(transcript) > MAX_CONTENT_CHARS
     content = transcript[:MAX_CONTENT_CHARS]
-    if len(transcript) > MAX_CONTENT_CHARS:
+    if truncated:
         content += "\n\n[Transcript truncated for processing]"
+
+    extraction_log.info(
+        "youtube_extract | done | title=%r | transcript_chars=%d | truncated=%s | elapsed_ms=%d",
+        title, len(transcript), truncated, timer.elapsed_ms,
+    )
+    extraction_log.debug("youtube_transcript_preview | %s", transcript[:500])
 
     return ExtractedContent(title=title, content=content, source_type="youtube")
 
@@ -117,8 +130,12 @@ def _extract_with_trafilatura(html: str) -> str | None:
     )
 
 
+@traceable(name="extract_article")
 async def extract_article(url: str) -> ExtractedContent:
     """Extract main content and title from any public article / blog / podcast page."""
+    timer = Timer()
+    extraction_log.info("article_extract | url=%s", url)
+
     try:
         async with httpx.AsyncClient(
             timeout=20,
@@ -158,9 +175,16 @@ async def extract_article(url: str) -> ExtractedContent:
     for suffix in [" | Medium", " - Medium", " | Substack", " | Dev.to", " - Dev.to", " | Hashnode"]:
         title = title.removesuffix(suffix)
 
+    truncated = len(text) > MAX_CONTENT_CHARS
     content = text[:MAX_CONTENT_CHARS]
-    if len(text) > MAX_CONTENT_CHARS:
+    if truncated:
         content += "\n\n[Content truncated for processing]"
+
+    extraction_log.info(
+        "article_extract | done | title=%r | content_chars=%d | truncated=%s | elapsed_ms=%d",
+        title, len(text), truncated, timer.elapsed_ms,
+    )
+    extraction_log.debug("article_content_preview | %s", text[:500])
 
     return ExtractedContent(title=title, content=content, source_type="article")
 

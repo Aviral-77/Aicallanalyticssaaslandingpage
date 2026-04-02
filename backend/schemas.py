@@ -41,11 +41,19 @@ class RepurposeRequest(BaseModel):
     tone: str          # thought_leader | casual | storytelling | data_driven | contrarian
 
 
+class PostVersion(BaseModel):
+    version: int
+    angle_id: str
+    angle_label: str
+    content: str
+
+
 class RepurposeResponse(BaseModel):
     id: Optional[int] = None
     source_url: str
     source_title: Optional[str] = None
     platform: str
     tone: str
-    generated_content: str
+    versions: list[PostVersion]
+    generated_content: str   # kept for backward compat — always == versions[0].content
     created_at: Optional[datetime] = None

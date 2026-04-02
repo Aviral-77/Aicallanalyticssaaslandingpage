@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-import { api, RepurposeResponse } from "../lib/api";
+import { api, PostVersion, RepurposeResponse } from "../lib/api";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -23,6 +23,9 @@ import {
   ChevronRight,
   Download,
   Brain,
+  Lightbulb,
+  BookOpen,
+  Zap,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -101,9 +104,10 @@ export function Create() {
 
   // Output state
   const [result, setResult] = useState<RepurposeResponse | null>(null);
-  const [generationStep, setGenerationStep] = useState<"idle" | "extracting" | "generating">("idle");
+  const [activeVersion, setActiveVersion] = useState<number>(1);
+  const [generationStep, setGenerationStep] = useState<"idle" | "extracting" | "searching" | "generating">("idle");
   const [error, setError] = useState("");
-  const [copied, setCopied] = useState(false);
+  const [copiedVersion, setCopiedVersion] = useState<number | null>(null);
 
   const isGenerating = generationStep !== "idle";
 
@@ -111,20 +115,19 @@ export function Create() {
     if (!selectedType || !url.trim()) return;
     setError("");
     setResult(null);
-
-    // Step 1: extracting
+    setActiveVersion(1);
     setGenerationStep("extracting");
     try {
-      // The backend does extraction + generation in one call.
-      // We switch the visual step after a short delay to show both phases.
-      const timer = setTimeout(() => setGenerationStep("generating"), 3500);
+      const t1 = setTimeout(() => setGenerationStep("searching"), 3000);
+      const t2 = setTimeout(() => setGenerationStep("generating"), 6000);
       const res = await api.repurpose({
         source_url: url.trim(),
         source_type: selectedType,
         platform,
         tone,
       });
-      clearTimeout(timer);
+      clearTimeout(t1);
+      clearTimeout(t2);
       setResult(res);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Generation failed");
@@ -133,11 +136,18 @@ export function Create() {
     }
   };
 
-  const handleCopy = () => {
-    if (!result) return;
-    navigator.clipboard.writeText(result.generated_content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleCopy = (version: PostVersion) => {
+    navigator.clipboard.writeText(version.content);
+    setCopiedVersion(version.version);
+    setTimeout(() => setCopiedVersion(null), 2000);
+  };
+
+  const handleDownload = (version: PostVersion) => {
+    const blob = new Blob([version.content], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `repost-${result?.platform ?? "post"}-v${version.version}-${Date.now()}.txt`;
+    a.click();
   };
 
   const handleLogout = () => {
@@ -147,6 +157,12 @@ export function Create() {
 
   const selectedContentType = CONTENT_TYPES.find((c) => c.id === selectedType);
   const canGenerate = !!selectedType && url.trim().length > 0;
+
+  const ANGLE_ICONS: Record<string, React.ElementType> = {
+    hook_insights: Lightbulb,
+    story_arc:     BookOpen,
+    bold_take:     Zap,
+  };
 
   return (
     <div className="min-h-screen bg-muted/20">
@@ -342,63 +358,64 @@ export function Create() {
           {/* Right: output */}
           <div className="space-y-4">
             <div className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-              Generated Post
+              Generated Posts
             </div>
 
+            {/* Empty state */}
             {!result && !isGenerating && !error && (
               <Card className="border-dashed border-border/60 bg-background/50">
                 <CardContent className="py-16 flex flex-col items-center justify-center text-center space-y-3">
                   <div className="w-12 h-12 rounded-2xl bg-muted flex items-center justify-center">
                     <Sparkles className="w-6 h-6 text-muted-foreground" />
                   </div>
-                  <p className="text-sm text-muted-foreground max-w-[200px]">
-                    Your generated post will appear here after you click Generate.
+                  <p className="text-sm text-muted-foreground max-w-[220px]">
+                    3 post versions will appear here — pick the one that fits best.
                   </p>
                 </CardContent>
               </Card>
             )}
 
+            {/* Loading: step indicators */}
             {isGenerating && (
               <Card className="border-border/60">
                 <CardContent className="py-12 flex flex-col items-center justify-center space-y-6">
-                  {/* Step indicators */}
-                  <div className="flex flex-col items-start space-y-3 w-full max-w-[220px]">
-                    {/* Step 1 */}
-                    <div className="flex items-center space-x-3">
-                      {generationStep === "extracting" ? (
-                        <Loader2 className="w-5 h-5 text-primary animate-spin flex-shrink-0" />
-                      ) : (
-                        <CheckCheck className="w-5 h-5 text-green-500 flex-shrink-0" />
-                      )}
-                      <span className={`text-sm font-medium ${generationStep === "extracting" ? "text-foreground" : "text-green-600"}`}>
-                        {generationStep === "extracting" ? "Extracting content…" : "Content extracted"}
-                      </span>
-                    </div>
-                    {/* Step 2 */}
-                    <div className="flex items-center space-x-3">
-                      {generationStep === "generating" ? (
-                        <Loader2 className="w-5 h-5 text-primary animate-spin flex-shrink-0" />
-                      ) : (
-                        <Brain className={`w-5 h-5 flex-shrink-0 ${generationStep === "extracting" ? "text-muted-foreground/40" : "text-green-500"}`} />
-                      )}
-                      <span className={`text-sm font-medium ${
-                        generationStep === "generating"
-                          ? "text-foreground"
-                          : generationStep === "extracting"
-                          ? "text-muted-foreground/50"
-                          : "text-green-600"
-                      }`}>
-                        {generationStep === "generating" ? "Claude is writing…" : "Generating post"}
-                      </span>
-                    </div>
+                  <div className="flex flex-col items-start space-y-3 w-full max-w-[240px]">
+                    {[
+                      { step: "extracting",  label: "Extracting content…",        done: "Content extracted",    icon: Link2 },
+                      { step: "searching",   label: "Searching the web…",          done: "Web context found",    icon: Brain },
+                      { step: "generating",  label: "Claude writing 3 versions…",  done: "Versions ready",       icon: Sparkles },
+                    ].map(({ step, label, done, icon: Icon }, i) => {
+                      const steps = ["extracting", "searching", "generating"];
+                      const currentIdx = steps.indexOf(generationStep);
+                      const thisIdx = i;
+                      const isPast    = thisIdx < currentIdx;
+                      const isCurrent = thisIdx === currentIdx;
+                      return (
+                        <div key={step} className="flex items-center space-x-3">
+                          {isCurrent ? (
+                            <Loader2 className="w-5 h-5 text-primary animate-spin flex-shrink-0" />
+                          ) : isPast ? (
+                            <CheckCheck className="w-5 h-5 text-green-500 flex-shrink-0" />
+                          ) : (
+                            <Icon className="w-5 h-5 text-muted-foreground/30 flex-shrink-0" />
+                          )}
+                          <span className={`text-sm font-medium ${
+                            isCurrent ? "text-foreground"
+                            : isPast   ? "text-green-600"
+                            :            "text-muted-foreground/40"
+                          }`}>
+                            {isPast ? done : label}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
-                  <p className="text-xs text-muted-foreground text-center">
-                    This usually takes 10–20 seconds
-                  </p>
+                  <p className="text-xs text-muted-foreground">Usually 20–40 seconds for 3 versions</p>
                 </CardContent>
               </Card>
             )}
 
+            {/* Error */}
             {error && (
               <div className="flex items-start gap-2 text-destructive text-sm bg-destructive/10 px-4 py-3 rounded-xl">
                 <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
@@ -406,87 +423,110 @@ export function Create() {
               </div>
             )}
 
+            {/* Results: 3 version cards */}
             {result && !isGenerating && (
-              <Card className="border-border/60 shadow-sm">
-                <CardContent className="p-5 space-y-4">
-                  {/* Header */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      {result.platform === "linkedin" ? (
-                        <div className="w-6 h-6 rounded bg-blue-600 flex items-center justify-center">
-                          <Linkedin className="w-3.5 h-3.5 text-white" />
-                        </div>
-                      ) : (
-                        <div className="w-6 h-6 rounded bg-sky-500 flex items-center justify-center">
-                          <Twitter className="w-3.5 h-3.5 text-white" />
-                        </div>
-                      )}
-                      <span className="text-sm font-medium capitalize">{result.platform} Post</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full border border-green-100">
-                      <div className="w-1.5 h-1.5 bg-green-500 rounded-full" />
-                      Ready to post
-                    </div>
+              <div className="space-y-4">
+                {/* Source + platform row */}
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    {result.platform === "linkedin" ? (
+                      <div className="w-5 h-5 rounded bg-blue-600 flex items-center justify-center">
+                        <Linkedin className="w-3 h-3 text-white" />
+                      </div>
+                    ) : (
+                      <div className="w-5 h-5 rounded bg-sky-500 flex items-center justify-center">
+                        <Twitter className="w-3 h-3 text-white" />
+                      </div>
+                    )}
+                    <span className="text-sm font-medium capitalize">{result.platform}</span>
+                    <span className="text-muted-foreground/50">·</span>
+                    <span className="text-xs text-muted-foreground capitalize">{result.tone.replace(/_/g, " ")} tone</span>
                   </div>
+                  <Button size="sm" variant="ghost" onClick={handleGenerate} disabled={isGenerating} className="text-xs">
+                    <RefreshCw className="w-3 h-3 mr-1" />
+                    Regenerate all
+                  </Button>
+                </div>
 
-                  {/* Source title */}
-                  {result.source_title && (
-                    <div className="text-xs text-muted-foreground bg-muted/40 px-3 py-1.5 rounded-lg">
-                      <span className="font-medium">Source:</span> {result.source_title}
-                    </div>
-                  )}
-
-                  {/* Generated content */}
-                  <div className="text-sm text-foreground leading-relaxed whitespace-pre-wrap bg-muted/20 rounded-lg p-4 border border-border/40 min-h-[180px]">
-                    {result.generated_content}
+                {result.source_title && (
+                  <div className="text-xs text-muted-foreground bg-muted/40 px-3 py-1.5 rounded-lg border border-border/40 truncate">
+                    <span className="font-medium">Source:</span> {result.source_title}
                   </div>
+                )}
 
-                  {/* Actions */}
-                  <div className="flex gap-2 pt-1">
-                    <Button size="sm" className="flex-1" onClick={handleCopy}>
-                      {copied ? (
-                        <>
-                          <CheckCheck className="w-4 h-4 mr-1.5 text-green-300" />
-                          Copied!
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="w-4 h-4 mr-1.5" />
-                          Copy Post
-                        </>
-                      )}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        const blob = new Blob([result.generated_content], { type: "text/plain" });
-                        const a = document.createElement("a");
-                        a.href = URL.createObjectURL(blob);
-                        a.download = `repost-${result.platform}-${Date.now()}.txt`;
-                        a.click();
-                      }}
+                {/* Version cards */}
+                {result.versions.map((v) => {
+                  const Icon = ANGLE_ICONS[v.angle_id] ?? Sparkles;
+                  const isActive = activeVersion === v.version;
+                  const isCopied = copiedVersion === v.version;
+                  return (
+                    <Card
+                      key={v.version}
+                      className={`transition-all duration-200 cursor-pointer ${
+                        isActive
+                          ? "border-primary shadow-md ring-1 ring-primary/20"
+                          : "border-border/60 hover:border-primary/30 hover:shadow-sm"
+                      }`}
+                      onClick={() => setActiveVersion(v.version)}
                     >
-                      <Download className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={handleGenerate}
-                      disabled={isGenerating}
-                    >
-                      <RefreshCw className="w-4 h-4 mr-1.5" />
-                      Regenerate
-                    </Button>
-                  </div>
+                      <CardContent className="p-4 space-y-3">
+                        {/* Version header */}
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${
+                              isActive ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                            }`}>
+                              <Icon className="w-3.5 h-3.5" />
+                            </div>
+                            <div>
+                              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                Version {v.version}
+                              </span>
+                              <span className="ml-2 text-xs font-medium text-foreground">{v.angle_label}</span>
+                            </div>
+                          </div>
+                          {isActive && (
+                            <div className="text-xs text-primary font-medium bg-primary/10 px-2 py-0.5 rounded-full">
+                              Selected
+                            </div>
+                          )}
+                        </div>
 
-                  <p className="text-xs text-muted-foreground text-center">
-                    Tone: <span className="font-medium capitalize">{result.tone.replace(/_/g, " ")}</span>
-                    &nbsp;·&nbsp;
-                    Generated by Claude Opus 4.6
-                  </p>
-                </CardContent>
-              </Card>
+                        {/* Content — collapsed preview unless selected */}
+                        {isActive ? (
+                          <div className="text-sm text-foreground leading-relaxed whitespace-pre-wrap bg-muted/20 rounded-lg p-3 border border-border/40 max-h-80 overflow-y-auto">
+                            {v.content}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground line-clamp-3 leading-relaxed">
+                            {v.content}
+                          </p>
+                        )}
+
+                        {/* Actions — only for selected */}
+                        {isActive && (
+                          <div className="flex gap-2 pt-1">
+                            <Button size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); handleCopy(v); }}>
+                              {isCopied ? (
+                                <><CheckCheck className="w-4 h-4 mr-1.5 text-green-300" />Copied!</>
+                              ) : (
+                                <><Copy className="w-4 h-4 mr-1.5" />Copy Post</>
+                              )}
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); handleDownload(v); }}>
+                              <Download className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+
+                <p className="text-center text-xs text-muted-foreground pb-2">
+                  Generated by Claude Opus 4.6 · Click a card to expand it
+                </p>
+              </div>
             )}
           </div>
         </div>
