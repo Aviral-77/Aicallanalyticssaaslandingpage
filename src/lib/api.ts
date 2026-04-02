@@ -64,6 +64,7 @@ export interface RepurposeRequest {
 export interface RepurposeResponse {
   id?: number;
   source_url: string;
+  source_title?: string;
   platform: string;
   tone: string;
   generated_content: string;

@@ -6,3 +6,11 @@ passlib[bcrypt]==1.7.4
 python-multipart==0.0.12
 pydantic[email]==2.10.3
 python-dotenv==1.0.1
+
+# LLM
+anthropic>=0.50.0
+
+# Content extraction
+youtube-transcript-api>=0.6.3
+trafilatura>=1.12.0
+httpx>=0.27.0

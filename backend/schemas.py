@@ -44,6 +44,7 @@ class RepurposeRequest(BaseModel):
 class RepurposeResponse(BaseModel):
     id: Optional[int] = None
     source_url: str
+    source_title: Optional[str] = None
     platform: str
     tone: str
     generated_content: str
