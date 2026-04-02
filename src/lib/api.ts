@@ -61,12 +61,20 @@ export interface RepurposeRequest {
   tone: string;
 }
 
+export interface PostVersion {
+  version: number;
+  angle_id: string;
+  angle_label: string;
+  content: string;
+}
+
 export interface RepurposeResponse {
   id?: number;
   source_url: string;
   source_title?: string;
   platform: string;
   tone: string;
-  generated_content: string;
+  versions: PostVersion[];
+  generated_content: string; // = versions[0].content
   created_at?: string;
 }

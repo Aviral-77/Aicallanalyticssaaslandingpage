@@ -1,10 +1,13 @@
 from dotenv import load_dotenv
-load_dotenv()  # Load .env before anything else reads env vars
+load_dotenv()  # Must run before any os.getenv() calls
 
+import json
 import os
+
 import anthropic as anthropic_sdk
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 import models
@@ -13,10 +16,35 @@ import auth
 from database import engine, get_db
 from content_extractor import extract as extract_content
 from llm import generate_post
+from logger import Timer, app_log, setup_logging
+from search import build_search_query, format_search_context, search_web
 
+# ── Startup ────────────────────────────────────────────────────────────────────
+
+setup_logging()
 models.Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Repost AI API", version="1.0.0")
+
+def _run_migrations() -> None:
+    """Add new columns to existing databases without dropping data."""
+    migrations = [
+        "ALTER TABLE repurposed_posts ADD COLUMN versions_json TEXT",
+    ]
+    with engine.connect() as conn:
+        for stmt in migrations:
+            try:
+                conn.execute(text(stmt))
+                conn.commit()
+                app_log.info("migration | applied: %s", stmt)
+            except Exception:
+                pass  # Column already exists — safe to ignore
+
+
+_run_migrations()
+
+# ── App ────────────────────────────────────────────────────────────────────────
+
+app = FastAPI(title="Repost AI API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,13 +55,12 @@ app.add_middleware(
 )
 
 
-# ── Auth routes ───────────────────────────────────────────────────────────────
+# ── Auth routes ────────────────────────────────────────────────────────────────
 
 @app.post("/auth/register", response_model=schemas.Token, status_code=status.HTTP_201_CREATED)
 def register(body: schemas.UserRegister, db: Session = Depends(get_db)):
     if db.query(models.User).filter(models.User.email == body.email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
-
     user = models.User(
         name=body.name,
         email=body.email,
@@ -42,19 +69,26 @@ def register(body: schemas.UserRegister, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
-
-    token = auth.create_access_token(user.id, user.email)
-    return schemas.Token(access_token=token, token_type="bearer", user=user)
+    app_log.info("register | user_id=%d | email=%s", user.id, user.email)
+    return schemas.Token(
+        access_token=auth.create_access_token(user.id, user.email),
+        token_type="bearer",
+        user=user,
+    )
 
 
 @app.post("/auth/login", response_model=schemas.Token)
 def login(body: schemas.UserLogin, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.email == body.email).first()
     if not user or not auth.verify_password(body.password, user.hashed_password):
+        app_log.warning("login_failed | email=%s", body.email)
         raise HTTPException(status_code=401, detail="Invalid email or password")
-
-    token = auth.create_access_token(user.id, user.email)
-    return schemas.Token(access_token=token, token_type="bearer", user=user)
+    app_log.info("login | user_id=%d | email=%s", user.id, user.email)
+    return schemas.Token(
+        access_token=auth.create_access_token(user.id, user.email),
+        token_type="bearer",
+        user=user,
+    )
 
 
 @app.get("/auth/me", response_model=schemas.UserOut)
@@ -76,44 +110,69 @@ async def repurpose_content(
             detail="ANTHROPIC_API_KEY is not configured. Add it to your .env file.",
         )
 
-    # Step 1: Extract content from the URL
+    timer = Timer()
+    app_log.info(
+        "repurpose_start | user_id=%d | source_type=%s | platform=%s | tone=%s | url=%s",
+        current_user.id, body.source_type, body.platform, body.tone, body.source_url,
+    )
+
+    # ── Step 1: Extract content ────────────────────────────────────────────────
     try:
         extracted = await extract_content(body.source_url, body.source_type)
     except ValueError as e:
+        app_log.warning("extraction_failed | user_id=%d | error=%s", current_user.id, e)
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
+        app_log.error("extraction_error | user_id=%d | error=%s", current_user.id, e)
         raise HTTPException(status_code=500, detail=f"Content extraction failed: {e}")
 
-    # Step 2: Generate post with LLM
+    # ── Step 2: Web search for enrichment ─────────────────────────────────────
+    search_query = build_search_query(extracted.title, body.source_type)
+    search_results = await search_web(search_query)
+    search_context = format_search_context(search_results)
+
+    # ── Step 3: Generate 3 versions concurrently ───────────────────────────────
     try:
-        generated = await generate_post(
+        versions = await generate_post(
             content=extracted.content,
             title=extracted.title,
             platform=body.platform,
             tone=body.tone,
             source_type=body.source_type,
+            search_context=search_context,
         )
     except anthropic_sdk.AuthenticationError:
-        raise HTTPException(status_code=503, detail="Invalid ANTHROPIC_API_KEY. Check your .env file.")
+        raise HTTPException(status_code=503, detail="Invalid ANTHROPIC_API_KEY.")
     except anthropic_sdk.RateLimitError:
-        raise HTTPException(status_code=429, detail="Claude API rate limit hit. Please wait a moment and try again.")
+        raise HTTPException(status_code=429, detail="Claude API rate limit hit. Please wait and retry.")
     except anthropic_sdk.APIError as e:
         raise HTTPException(status_code=502, detail=f"Claude API error: {e.message}")
     except Exception as e:
+        app_log.error("generation_error | user_id=%d | error=%s", current_user.id, e)
         raise HTTPException(status_code=500, detail=f"Post generation failed: {e}")
 
-    # Step 3: Persist to DB
+    # ── Step 4: Persist ────────────────────────────────────────────────────────
+    versions_data = [
+        {"version": v.version, "angle_id": v.angle_id, "angle_label": v.angle_label, "content": v.content}
+        for v in versions
+    ]
     post = models.RepurposedPost(
         user_id=current_user.id,
         source_url=body.source_url,
         source_type=body.source_type,
         platform=body.platform,
         tone=body.tone,
-        generated_content=generated,
+        generated_content=versions[0].content,
+        versions_json=json.dumps(versions_data),
     )
     db.add(post)
     db.commit()
     db.refresh(post)
+
+    app_log.info(
+        "repurpose_done | user_id=%d | post_id=%d | versions=%d | elapsed_ms=%d",
+        current_user.id, post.id, len(versions), timer.elapsed_ms,
+    )
 
     return schemas.RepurposeResponse(
         id=post.id,
@@ -121,7 +180,16 @@ async def repurpose_content(
         source_title=extracted.title,
         platform=post.platform,
         tone=post.tone,
-        generated_content=post.generated_content,
+        versions=[
+            schemas.PostVersion(
+                version=v.version,
+                angle_id=v.angle_id,
+                angle_label=v.angle_label,
+                content=v.content,
+            )
+            for v in versions
+        ],
+        generated_content=versions[0].content,
         created_at=post.created_at,
     )
 
@@ -138,6 +206,17 @@ def get_history(
         .limit(50)
         .all()
     )
+
+    def _to_versions(p: models.RepurposedPost) -> list[schemas.PostVersion]:
+        if p.versions_json:
+            try:
+                raw = json.loads(p.versions_json)
+                return [schemas.PostVersion(**v) for v in raw]
+            except Exception:
+                pass
+        # Fallback for old rows without versions_json
+        return [schemas.PostVersion(version=1, angle_id="hook_insights", angle_label="Hook & Insights", content=p.generated_content)]
+
     return [
         schemas.RepurposeResponse(
             id=p.id,
@@ -145,6 +224,7 @@ def get_history(
             source_title=None,
             platform=p.platform,
             tone=p.tone,
+            versions=_to_versions(p),
             generated_content=p.generated_content,
             created_at=p.created_at,
         )
@@ -154,4 +234,9 @@ def get_history(
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "Repost AI API"}
+    return {
+        "status": "ok",
+        "service": "Repost AI API",
+        "langsmith_tracing": bool(os.getenv("LANGCHAIN_TRACING_V2")),
+        "search_enabled": bool(os.getenv("TAVILY_API_KEY")),
+    }
