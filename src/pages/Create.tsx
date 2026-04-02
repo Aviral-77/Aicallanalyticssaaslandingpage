@@ -21,6 +21,8 @@ import {
   CheckCheck,
   LogOut,
   ChevronRight,
+  Download,
+  Brain,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -99,27 +101,35 @@ export function Create() {
 
   // Output state
   const [result, setResult] = useState<RepurposeResponse | null>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [generationStep, setGenerationStep] = useState<"idle" | "extracting" | "generating">("idle");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+
+  const isGenerating = generationStep !== "idle";
 
   const handleGenerate = async () => {
     if (!selectedType || !url.trim()) return;
     setError("");
-    setIsGenerating(true);
     setResult(null);
+
+    // Step 1: extracting
+    setGenerationStep("extracting");
     try {
+      // The backend does extraction + generation in one call.
+      // We switch the visual step after a short delay to show both phases.
+      const timer = setTimeout(() => setGenerationStep("generating"), 3500);
       const res = await api.repurpose({
         source_url: url.trim(),
         source_type: selectedType,
         platform,
         tone,
       });
+      clearTimeout(timer);
       setResult(res);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Generation failed");
     } finally {
-      setIsGenerating(false);
+      setGenerationStep("idle");
     }
   };
 
@@ -350,9 +360,41 @@ export function Create() {
 
             {isGenerating && (
               <Card className="border-border/60">
-                <CardContent className="py-16 flex flex-col items-center justify-center space-y-3">
-                  <Loader2 className="w-8 h-8 text-primary animate-spin" />
-                  <p className="text-sm text-muted-foreground">Analyzing and generating your post…</p>
+                <CardContent className="py-12 flex flex-col items-center justify-center space-y-6">
+                  {/* Step indicators */}
+                  <div className="flex flex-col items-start space-y-3 w-full max-w-[220px]">
+                    {/* Step 1 */}
+                    <div className="flex items-center space-x-3">
+                      {generationStep === "extracting" ? (
+                        <Loader2 className="w-5 h-5 text-primary animate-spin flex-shrink-0" />
+                      ) : (
+                        <CheckCheck className="w-5 h-5 text-green-500 flex-shrink-0" />
+                      )}
+                      <span className={`text-sm font-medium ${generationStep === "extracting" ? "text-foreground" : "text-green-600"}`}>
+                        {generationStep === "extracting" ? "Extracting content…" : "Content extracted"}
+                      </span>
+                    </div>
+                    {/* Step 2 */}
+                    <div className="flex items-center space-x-3">
+                      {generationStep === "generating" ? (
+                        <Loader2 className="w-5 h-5 text-primary animate-spin flex-shrink-0" />
+                      ) : (
+                        <Brain className={`w-5 h-5 flex-shrink-0 ${generationStep === "extracting" ? "text-muted-foreground/40" : "text-green-500"}`} />
+                      )}
+                      <span className={`text-sm font-medium ${
+                        generationStep === "generating"
+                          ? "text-foreground"
+                          : generationStep === "extracting"
+                          ? "text-muted-foreground/50"
+                          : "text-green-600"
+                      }`}>
+                        {generationStep === "generating" ? "Claude is writing…" : "Generating post"}
+                      </span>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground text-center">
+                    This usually takes 10–20 seconds
+                  </p>
                 </CardContent>
               </Card>
             )}
@@ -367,6 +409,7 @@ export function Create() {
             {result && !isGenerating && (
               <Card className="border-border/60 shadow-sm">
                 <CardContent className="p-5 space-y-4">
+                  {/* Header */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       {result.platform === "linkedin" ? (
@@ -380,22 +423,27 @@ export function Create() {
                       )}
                       <span className="text-sm font-medium capitalize">{result.platform} Post</span>
                     </div>
-                    <div className="flex items-center gap-1.5 text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
+                    <div className="flex items-center gap-1.5 text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full border border-green-100">
                       <div className="w-1.5 h-1.5 bg-green-500 rounded-full" />
-                      Ready
+                      Ready to post
                     </div>
                   </div>
 
-                  <div className="text-sm text-foreground leading-relaxed whitespace-pre-wrap bg-muted/30 rounded-lg p-4 border border-border/40 min-h-[160px]">
+                  {/* Source title */}
+                  {result.source_title && (
+                    <div className="text-xs text-muted-foreground bg-muted/40 px-3 py-1.5 rounded-lg">
+                      <span className="font-medium">Source:</span> {result.source_title}
+                    </div>
+                  )}
+
+                  {/* Generated content */}
+                  <div className="text-sm text-foreground leading-relaxed whitespace-pre-wrap bg-muted/20 rounded-lg p-4 border border-border/40 min-h-[180px]">
                     {result.generated_content}
                   </div>
 
+                  {/* Actions */}
                   <div className="flex gap-2 pt-1">
-                    <Button
-                      size="sm"
-                      className="flex-1"
-                      onClick={handleCopy}
-                    >
+                    <Button size="sm" className="flex-1" onClick={handleCopy}>
                       {copied ? (
                         <>
                           <CheckCheck className="w-4 h-4 mr-1.5 text-green-300" />
@@ -411,6 +459,19 @@ export function Create() {
                     <Button
                       size="sm"
                       variant="outline"
+                      onClick={() => {
+                        const blob = new Blob([result.generated_content], { type: "text/plain" });
+                        const a = document.createElement("a");
+                        a.href = URL.createObjectURL(blob);
+                        a.download = `repost-${result.platform}-${Date.now()}.txt`;
+                        a.click();
+                      }}
+                    >
+                      <Download className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
                       onClick={handleGenerate}
                       disabled={isGenerating}
                     >
@@ -420,7 +481,9 @@ export function Create() {
                   </div>
 
                   <p className="text-xs text-muted-foreground text-center">
-                    Tone: <span className="font-medium capitalize">{result.tone.replace("_", " ")}</span>
+                    Tone: <span className="font-medium capitalize">{result.tone.replace(/_/g, " ")}</span>
+                    &nbsp;·&nbsp;
+                    Generated by Claude Opus 4.6
                   </p>
                 </CardContent>
               </Card>
