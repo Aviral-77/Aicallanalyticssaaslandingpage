@@ -8,7 +8,7 @@ pydantic[email]==2.10.3
 python-dotenv==1.0.1
 
 # LLM
-anthropic>=0.50.0
+openai>=1.60.0
 
 # Observability / evaluation
 langsmith>=0.1.147

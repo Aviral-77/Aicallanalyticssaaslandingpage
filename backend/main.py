@@ -4,7 +4,7 @@ load_dotenv()  # Must run before any os.getenv() calls
 import json
 import os
 
-import anthropic as anthropic_sdk
+import openai
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
@@ -105,10 +105,10 @@ async def repurpose_content(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user),
 ):
-    if not os.getenv("ANTHROPIC_API_KEY"):
+    if not os.getenv("OPENAI_API_KEY"):
         raise HTTPException(
             status_code=503,
-            detail="ANTHROPIC_API_KEY is not configured. Add it to your .env file.",
+            detail="OPENAI_API_KEY is not configured. Add it to your .env file.",
         )
 
     timer = Timer()
@@ -142,12 +142,12 @@ async def repurpose_content(
             source_type=body.source_type,
             search_context=search_context,
         )
-    except anthropic_sdk.AuthenticationError:
-        raise HTTPException(status_code=503, detail="Invalid ANTHROPIC_API_KEY.")
-    except anthropic_sdk.RateLimitError:
-        raise HTTPException(status_code=429, detail="Claude API rate limit hit. Please wait and retry.")
-    except anthropic_sdk.APIError as e:
-        raise HTTPException(status_code=502, detail=f"Claude API error: {e.message}")
+    except openai.AuthenticationError:
+        raise HTTPException(status_code=503, detail="Invalid OPENAI_API_KEY.")
+    except openai.RateLimitError:
+        raise HTTPException(status_code=429, detail="OpenAI API rate limit hit. Please wait and retry.")
+    except openai.APIError as e:
+        raise HTTPException(status_code=502, detail=f"OpenAI API error: {e.message}")
     except Exception as e:
         app_log.error("generation_error | user_id=%d | error=%s", current_user.id, e)
         raise HTTPException(status_code=500, detail=f"Post generation failed: {e}")
@@ -239,10 +239,10 @@ async def from_topic(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user),
 ):
-    if not os.getenv("ANTHROPIC_API_KEY"):
+    if not os.getenv("OPENAI_API_KEY"):
         raise HTTPException(
             status_code=503,
-            detail="ANTHROPIC_API_KEY is not configured. Add it to your .env file.",
+            detail="OPENAI_API_KEY is not configured. Add it to your .env file.",
         )
 
     timer = Timer()
@@ -261,12 +261,12 @@ async def from_topic(
             tone=body.tone,
             research_context=research.context_str,
         )
-    except anthropic_sdk.AuthenticationError:
-        raise HTTPException(status_code=503, detail="Invalid ANTHROPIC_API_KEY.")
-    except anthropic_sdk.RateLimitError:
-        raise HTTPException(status_code=429, detail="Claude API rate limit hit. Please wait and retry.")
-    except anthropic_sdk.APIError as e:
-        raise HTTPException(status_code=502, detail=f"Claude API error: {e.message}")
+    except openai.AuthenticationError:
+        raise HTTPException(status_code=503, detail="Invalid OPENAI_API_KEY.")
+    except openai.RateLimitError:
+        raise HTTPException(status_code=429, detail="OpenAI API rate limit hit. Please wait and retry.")
+    except openai.APIError as e:
+        raise HTTPException(status_code=502, detail=f"OpenAI API error: {e.message}")
     except Exception as e:
         app_log.error("from_topic_error | user_id=%d | error=%s", current_user.id, e)
         raise HTTPException(status_code=500, detail=f"Topic generation failed: {e}")
