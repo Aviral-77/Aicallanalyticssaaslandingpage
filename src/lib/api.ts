@@ -43,6 +43,12 @@ export const api = {
     }),
 
   history: () => request<RepurposeResponse[]>("/content/history"),
+
+  fromTopic: (payload: TopicRequest) =>
+    request<TopicResponse>("/content/from-topic", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 };
 
 // Types mirroring backend schemas
@@ -77,4 +83,26 @@ export interface RepurposeResponse {
   versions: PostVersion[];
   generated_content: string; // = versions[0].content
   created_at?: string;
+}
+
+export interface CarouselSlide {
+  slide_number: number;
+  slide_type: "cover" | "insight" | "stat" | "quote" | "list" | "cta";
+  emoji: string;
+  headline: string;
+  subheadline: string;
+  body: string;
+}
+
+export interface TopicRequest {
+  topic: string;
+  tone: string;
+}
+
+export interface TopicResponse {
+  topic: string;
+  tone: string;
+  versions: PostVersion[];
+  carousel_slides: CarouselSlide[];
+  generated_content: string;
 }

@@ -57,3 +57,27 @@ class RepurposeResponse(BaseModel):
     versions: list[PostVersion]
     generated_content: str   # kept for backward compat — always == versions[0].content
     created_at: Optional[datetime] = None
+
+
+# ── Topic-based content ───────────────────────────────────────────────────────
+
+class CarouselSlide(BaseModel):
+    slide_number: int
+    slide_type: str       # cover | insight | stat | quote | list | cta
+    emoji: str
+    headline: str
+    subheadline: str
+    body: str
+
+
+class TopicRequest(BaseModel):
+    topic: str
+    tone: str   # thought_leader | casual | storytelling | data_driven | contrarian
+
+
+class TopicResponse(BaseModel):
+    topic: str
+    tone: str
+    versions: list[PostVersion]
+    carousel_slides: list[CarouselSlide]
+    generated_content: str   # = versions[0].content for convenience

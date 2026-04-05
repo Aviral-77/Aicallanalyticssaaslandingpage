@@ -15,8 +15,9 @@ import schemas
 import auth
 from database import engine, get_db
 from content_extractor import extract as extract_content
-from llm import generate_post
+from llm import generate_carousel, generate_from_topic, generate_post
 from logger import Timer, app_log, setup_logging
+from research import research_topic
 from search import build_search_query, format_search_context, search_web
 
 # ── Startup ────────────────────────────────────────────────────────────────────
@@ -230,6 +231,76 @@ def get_history(
         )
         for p in posts
     ]
+
+
+@app.post("/content/from-topic", response_model=schemas.TopicResponse)
+async def from_topic(
+    body: schemas.TopicRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user),
+):
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        raise HTTPException(
+            status_code=503,
+            detail="ANTHROPIC_API_KEY is not configured. Add it to your .env file.",
+        )
+
+    timer = Timer()
+    app_log.info(
+        "from_topic_start | user_id=%d | topic=%r | tone=%s",
+        current_user.id, body.topic, body.tone,
+    )
+
+    # ── Step 1: Research the topic ─────────────────────────────────────────────
+    research = await research_topic(body.topic)
+
+    # ── Step 2: Generate post versions + carousel in parallel ──────────────────
+    try:
+        versions, carousel_slides = await generate_from_topic(
+            topic=body.topic,
+            tone=body.tone,
+            research_context=research.context_str,
+        )
+    except anthropic_sdk.AuthenticationError:
+        raise HTTPException(status_code=503, detail="Invalid ANTHROPIC_API_KEY.")
+    except anthropic_sdk.RateLimitError:
+        raise HTTPException(status_code=429, detail="Claude API rate limit hit. Please wait and retry.")
+    except anthropic_sdk.APIError as e:
+        raise HTTPException(status_code=502, detail=f"Claude API error: {e.message}")
+    except Exception as e:
+        app_log.error("from_topic_error | user_id=%d | error=%s", current_user.id, e)
+        raise HTTPException(status_code=500, detail=f"Topic generation failed: {e}")
+
+    app_log.info(
+        "from_topic_done | user_id=%d | topic=%r | versions=%d | slides=%d | elapsed_ms=%d",
+        current_user.id, body.topic, len(versions), len(carousel_slides), timer.elapsed_ms,
+    )
+
+    return schemas.TopicResponse(
+        topic=body.topic,
+        tone=body.tone,
+        versions=[
+            schemas.PostVersion(
+                version=v.version,
+                angle_id=v.angle_id,
+                angle_label=v.angle_label,
+                content=v.content,
+            )
+            for v in versions
+        ],
+        carousel_slides=[
+            schemas.CarouselSlide(
+                slide_number=s.slide_number,
+                slide_type=s.slide_type,
+                emoji=s.emoji,
+                headline=s.headline,
+                subheadline=s.subheadline,
+                body=s.body,
+            )
+            for s in carousel_slides
+        ],
+        generated_content=versions[0].content if versions else "",
+    )
 
 
 @app.get("/health")
