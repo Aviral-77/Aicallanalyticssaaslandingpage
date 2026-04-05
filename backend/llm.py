@@ -236,3 +236,182 @@ async def generate_post(
     versions = await asyncio.gather(*tasks)
     llm_log.info("generate_post | complete | versions=%d", len(versions))
     return list(versions)
+
+
+# ── Carousel generation ────────────────────────────────────────────────────────
+
+CAROUSEL_SYSTEM_PROMPT = (
+    "You are a LinkedIn carousel designer for tech founders and startup builders.\n\n"
+    "You create visually structured carousels that educate, inspire action, and drive saves/shares.\n\n"
+    "Output ONLY valid JSON — no markdown fences, no explanation, no preamble."
+)
+
+CAROUSEL_SLIDE_TYPES = {
+    "cover":   "Title slide — bold headline + punchy subheadline",
+    "insight": "Key insight slide — headline + 2-3 bullet points or short paragraph",
+    "stat":    "Statistic slide — big number/stat + brief explanation",
+    "quote":   "Quote slide — memorable quote or bold statement",
+    "list":    "List slide — numbered or bulleted list of items",
+    "cta":     "Call-to-action slide — closes the carousel, drives engagement",
+}
+
+
+@dataclass
+class CarouselSlide:
+    slide_number: int
+    slide_type: str       # cover | insight | stat | quote | list | cta
+    emoji: str
+    headline: str
+    subheadline: str
+    body: str             # main body text / bullets (may be empty for stat/quote slides)
+
+
+@traceable(name="generate_carousel", run_type="llm")
+async def generate_carousel(
+    *,
+    topic: str,
+    research_context: str,
+    tone: str,
+) -> list[CarouselSlide]:
+    """
+    Generate a 6-8 slide LinkedIn carousel about `topic`.
+    Returns a list of CarouselSlide objects parsed from Claude JSON output.
+    """
+    tone_desc = TONE_DESCRIPTIONS.get(tone, TONE_DESCRIPTIONS["thought_leader"])
+
+    slide_type_docs = "\n".join(
+        f'  "{k}": {v}' for k, v in CAROUSEL_SLIDE_TYPES.items()
+    )
+
+    prompt = (
+        f"Create a LinkedIn carousel about: {topic!r}\n\n"
+        f"--- RESEARCH CONTEXT ---\n{research_context}\n--- END CONTEXT ---\n\n"
+        f"Voice/tone: {tone_desc}\n\n"
+        "Design a carousel with 6-8 slides. Each slide must be concise and visually impactful.\n\n"
+        f"Allowed slide_type values:\n{slide_type_docs}\n\n"
+        "Rules:\n"
+        "  • First slide must be type 'cover'\n"
+        "  • Last slide must be type 'cta' with a compelling call to action\n"
+        "  • Mix insight, stat, quote, and list slides in between\n"
+        "  • body text ≤ 80 words per slide\n"
+        "  • For list slides, use '\\n' to separate bullet points in the body field\n"
+        "  • Choose a relevant single emoji for each slide\n\n"
+        "Return a JSON array of slide objects. Each object has exactly these keys:\n"
+        '  slide_number (int), slide_type (str), emoji (str), headline (str), subheadline (str), body (str)\n\n'
+        "Example (structure only):\n"
+        '[\n'
+        '  {"slide_number": 1, "slide_type": "cover", "emoji": "🚀", "headline": "...", "subheadline": "...", "body": ""},\n'
+        '  {"slide_number": 2, "slide_type": "insight", "emoji": "💡", "headline": "...", "subheadline": "...", "body": "..."}\n'
+        ']\n\n'
+        "Output ONLY the JSON array — no markdown, no explanation."
+    )
+
+    timer = Timer()
+    llm_log.info(
+        "carousel_request | topic=%r | model=%s | tone=%s | prompt_chars=%d",
+        topic, MODEL, tone, len(prompt),
+    )
+
+    client = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+    async with client.messages.stream(
+        model=MODEL,
+        max_tokens=3000,
+        system=CAROUSEL_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": prompt}],
+    ) as stream:
+        message = await stream.get_final_message()
+
+    raw = message.content[0].text.strip() if message.content else "[]"
+
+    llm_log.info(
+        "carousel_response | topic=%r | output_chars=%d | input_tokens=%d | output_tokens=%d | elapsed_ms=%d",
+        topic, len(raw),
+        message.usage.input_tokens,
+        message.usage.output_tokens,
+        timer.elapsed_ms,
+    )
+    llm_log.debug("carousel_raw | topic=%r |\n%s", topic, raw)
+
+    return _parse_carousel(raw)
+
+
+def _parse_carousel(raw: str) -> list[CarouselSlide]:
+    """Parse JSON array from LLM output into CarouselSlide list. Tolerates minor formatting."""
+    import json, re
+
+    # Strip markdown fences if present
+    cleaned = re.sub(r"^```[a-z]*\n?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
+
+    try:
+        slides_data = json.loads(cleaned)
+    except json.JSONDecodeError:
+        llm_log.warning("carousel_parse_error | falling back to empty carousel | raw=%r", raw[:200])
+        return []
+
+    slides = []
+    for item in slides_data:
+        try:
+            slides.append(CarouselSlide(
+                slide_number=int(item.get("slide_number", len(slides) + 1)),
+                slide_type=item.get("slide_type", "insight"),
+                emoji=item.get("emoji", "✨"),
+                headline=item.get("headline", ""),
+                subheadline=item.get("subheadline", ""),
+                body=item.get("body", ""),
+            ))
+        except Exception as exc:
+            llm_log.warning("carousel_slide_parse_error | item=%r | error=%s", item, exc)
+
+    return slides
+
+
+# ── Topic-based generation (post + carousel) ──────────────────────────────────
+
+@traceable(name="generate_from_topic", run_type="chain")
+async def generate_from_topic(
+    *,
+    topic: str,
+    tone: str,
+    research_context: str,
+) -> tuple[list[PostVersion], list[CarouselSlide]]:
+    """
+    Generate 3 LinkedIn post versions + a carousel in parallel.
+    Returns (versions, carousel_slides).
+    """
+    llm_log.info(
+        "generate_from_topic | topic=%r | tone=%s | research_chars=%d",
+        topic, tone, len(research_context),
+    )
+
+    post_tasks = [
+        _generate_single_version(
+            content=research_context,
+            title=topic,
+            platform="linkedin",
+            tone=tone,
+            source_type="topic",
+            search_context="",  # already embedded in research_context
+            angle=angle,
+            version_num=i + 1,
+        )
+        for i, angle in enumerate(ANGLES)
+    ]
+
+    carousel_task = generate_carousel(
+        topic=topic,
+        research_context=research_context,
+        tone=tone,
+    )
+
+    # Run all 4 tasks concurrently (3 post versions + 1 carousel)
+    results = await asyncio.gather(*post_tasks, carousel_task)
+    versions = list(results[:3])
+    carousel_slides = results[3]
+
+    llm_log.info(
+        "generate_from_topic | complete | versions=%d | slides=%d",
+        len(versions), len(carousel_slides),
+    )
+
+    return versions, carousel_slides
