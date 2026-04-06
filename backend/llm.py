@@ -1,23 +1,37 @@
 """
-LLM integration — generates 3 parallel post versions using Claude Opus 4.6.
+LLM integration — generates 3 parallel post versions using Gemini 2.0 Flash.
 
 Features:
   - LangSmith tracing via @traceable (set LANGCHAIN_TRACING_V2=true + LANGCHAIN_API_KEY)
   - Structured file logging (llm.log)
   - 3 versions generated concurrently, each with a distinct structural angle
   - Web-search context injected into prompt for richer output
+
+Provider switching (comment/uncomment as needed):
+  - Gemini:   google-generativeai  |  GEMINI_API_KEY
+  - OpenAI:   openai               |  OPENAI_API_KEY    (commented out)
+  - Anthropic: anthropic           |  ANTHROPIC_API_KEY (commented out)
 """
 
 import asyncio
 import os
 from dataclasses import dataclass
 
-from openai import AsyncOpenAI
+# ── Active provider: Gemini ───────────────────────────────────────────────────
+import google.generativeai as genai
+
+# ── Commented-out providers ───────────────────────────────────────────────────
+# from openai import AsyncOpenAI           # OpenAI GPT-4o
+# import anthropic                          # Anthropic Claude
+
 from langsmith import traceable
 
 from logger import Timer, llm_log
 
-MODEL = "gpt-4o"
+# ── Model selection ───────────────────────────────────────────────────────────
+MODEL = "gemini-2.0-flash"
+# MODEL = "gpt-4o"              # OpenAI
+# MODEL = "claude-opus-4-6"     # Anthropic
 
 # ── Tone descriptions (voice / personality) ───────────────────────────────────
 
@@ -170,20 +184,29 @@ async def _generate_single_version(
         version_num, angle["id"], MODEL, platform, tone, len(prompt),
     )
 
-    client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-    response = await client.chat.completions.create(
-        model=MODEL,
-        max_tokens=2048,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
+    # ── Gemini ────────────────────────────────────────────────────────────────
+    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+    gemini = genai.GenerativeModel(
+        model_name=MODEL,
+        system_instruction=SYSTEM_PROMPT,
     )
+    response = await gemini.generate_content_async(
+        prompt,
+        generation_config=genai.types.GenerationConfig(max_output_tokens=2048),
+    )
+    output_text   = response.text.strip() if response.text else ""
+    input_tokens  = response.usage_metadata.prompt_token_count      if response.usage_metadata else 0
+    output_tokens = response.usage_metadata.candidates_token_count  if response.usage_metadata else 0
 
-    output_text = response.choices[0].message.content.strip() if response.choices else ""
-    input_tokens  = response.usage.prompt_tokens if response.usage else 0
-    output_tokens = response.usage.completion_tokens if response.usage else 0
+    # ── OpenAI (commented out) ────────────────────────────────────────────────
+    # client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    # response = await client.chat.completions.create(
+    #     model=MODEL, max_tokens=2048,
+    #     messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}],
+    # )
+    # output_text   = response.choices[0].message.content.strip() if response.choices else ""
+    # input_tokens  = response.usage.prompt_tokens if response.usage else 0
+    # output_tokens = response.usage.completion_tokens if response.usage else 0
 
     llm_log.info(
         "llm_response | version=%d | angle=%s | output_chars=%d | input_tokens=%d | output_tokens=%d | elapsed_ms=%d",
@@ -315,20 +338,29 @@ async def generate_carousel(
         topic, MODEL, tone, len(prompt),
     )
 
-    client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-    response = await client.chat.completions.create(
-        model=MODEL,
-        max_tokens=3000,
-        messages=[
-            {"role": "system", "content": CAROUSEL_SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
+    # ── Gemini ────────────────────────────────────────────────────────────────
+    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+    gemini = genai.GenerativeModel(
+        model_name=MODEL,
+        system_instruction=CAROUSEL_SYSTEM_PROMPT,
     )
+    response = await gemini.generate_content_async(
+        prompt,
+        generation_config=genai.types.GenerationConfig(max_output_tokens=3000),
+    )
+    raw           = response.text.strip() if response.text else "[]"
+    input_tokens  = response.usage_metadata.prompt_token_count      if response.usage_metadata else 0
+    output_tokens = response.usage_metadata.candidates_token_count  if response.usage_metadata else 0
 
-    raw = response.choices[0].message.content.strip() if response.choices else "[]"
-    input_tokens  = response.usage.prompt_tokens if response.usage else 0
-    output_tokens = response.usage.completion_tokens if response.usage else 0
+    # ── OpenAI (commented out) ────────────────────────────────────────────────
+    # client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    # response = await client.chat.completions.create(
+    #     model=MODEL, max_tokens=3000,
+    #     messages=[{"role": "system", "content": CAROUSEL_SYSTEM_PROMPT}, {"role": "user", "content": prompt}],
+    # )
+    # raw           = response.choices[0].message.content.strip() if response.choices else "[]"
+    # input_tokens  = response.usage.prompt_tokens if response.usage else 0
+    # output_tokens = response.usage.completion_tokens if response.usage else 0
 
     llm_log.info(
         "carousel_response | topic=%r | output_chars=%d | input_tokens=%d | output_tokens=%d | elapsed_ms=%d",
