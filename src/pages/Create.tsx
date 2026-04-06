@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useRef } from "react";
+import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { api, PostVersion, RepurposeResponse, TopicResponse } from "../lib/api";
 import { CarouselPreview } from "../components/CarouselPreview";
@@ -7,6 +7,7 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Card, CardContent } from "../components/ui/card";
+import { applyFormat } from "../lib/formatText";
 import {
   Youtube,
   FileText,
@@ -29,6 +30,13 @@ import {
   Zap,
   PenLine,
   LayoutTemplate,
+  CalendarClock,
+  Settings,
+  Bold,
+  Italic,
+  RotateCcw,
+  Calendar,
+  X,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -129,8 +137,62 @@ export function Create() {
   const [error, setError] = useState("");
   const [copiedVersion, setCopiedVersion] = useState<number | null>(null);
 
+  // Per-version edited content (for formatting toolbar)
+  const [editedContents, setEditedContents] = useState<Record<number, string>>({});
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Schedule modal state
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [scheduleDate, setScheduleDate] = useState("");
+  const [scheduleTime, setScheduleTime] = useState("09:00");
+  const [scheduleSaving, setScheduleSaving] = useState(false);
+  const [scheduleSaved, setScheduleSaved] = useState(false);
+
   const isGenerating = generationStep !== "idle";
   const isTopicMode = selectedType === "topic";
+
+  // Get the content to display (edited or original) for a given version
+  const getContent = (v: PostVersion) => editedContents[v.version] ?? v.content;
+
+  const handleFormat = (type: "bold" | "italic") => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    if (start === end) return;
+    const current = ta.value;
+    const updated = applyFormat(current, start, end, type);
+    setEditedContents((prev) => ({ ...prev, [activeVersion]: updated }));
+    // Restore cursor after React re-render
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+        textareaRef.current.setSelectionRange(start, end);
+      }
+    });
+  };
+
+  const handleScheduleSave = async () => {
+    const versions = isTopicMode ? (topicResult?.versions ?? []) : (result?.versions ?? []);
+    const activeV = versions.find((v) => v.version === activeVersion);
+    if (!activeV || !scheduleDate) return;
+    const content = getContent(activeV);
+    const scheduledFor = new Date(`${scheduleDate}T${scheduleTime}`).toISOString();
+    const platform = isTopicMode ? "linkedin" : (result?.platform ?? "linkedin");
+    const sourceLabel = isTopicMode
+      ? `Topic: ${topicResult?.topic}`
+      : result?.source_title ?? result?.source_url ?? "";
+    setScheduleSaving(true);
+    try {
+      await api.schedulePost({ content, platform, scheduled_for: scheduledFor, source_label: sourceLabel });
+      setScheduleSaved(true);
+      setTimeout(() => { setScheduleSaved(false); setShowSchedule(false); }, 2000);
+    } catch {
+      // ignore
+    } finally {
+      setScheduleSaving(false);
+    }
+  };
 
   const handleGenerate = async () => {
     if (!selectedType || !url.trim()) return;
@@ -139,6 +201,8 @@ export function Create() {
     setTopicResult(null);
     setActiveVersion(1);
     setActiveTab("post");
+    setEditedContents({});
+    setShowSchedule(false);
 
     if (isTopicMode) {
       // Topic flow
@@ -177,13 +241,13 @@ export function Create() {
   };
 
   const handleCopy = (version: PostVersion) => {
-    navigator.clipboard.writeText(version.content);
+    navigator.clipboard.writeText(getContent(version));
     setCopiedVersion(version.version);
     setTimeout(() => setCopiedVersion(null), 2000);
   };
 
   const handleDownload = (version: PostVersion) => {
-    const blob = new Blob([version.content], { type: "text/plain" });
+    const blob = new Blob([getContent(version)], { type: "text/plain" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     const prefix = isTopicMode ? "topic" : result?.platform ?? "post";
@@ -240,10 +304,15 @@ export function Create() {
             <span className="font-semibold">Repost AI</span>
           </div>
 
-          <div className="flex items-center space-x-3">
-            <span className="text-sm text-muted-foreground hidden sm:inline">
-              {user?.name}
-            </span>
+          <div className="flex items-center gap-1 sm:gap-2">
+            <Link to="/scheduled" className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground px-2 py-1 rounded-md transition-colors">
+              <CalendarClock className="w-4 h-4" />
+              <span className="hidden sm:inline">Scheduled</span>
+            </Link>
+            <Link to="/settings" className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground px-2 py-1 rounded-md transition-colors">
+              <Settings className="w-4 h-4" />
+              <span className="hidden sm:inline">Voice</span>
+            </Link>
             <Button
               variant="ghost"
               size="sm"
@@ -251,7 +320,7 @@ export function Create() {
               className="text-muted-foreground hover:text-foreground"
             >
               <LogOut className="w-4 h-4 mr-1.5" />
-              Sign out
+              <span className="hidden sm:inline">Sign out</span>
             </Button>
           </div>
         </div>
@@ -626,30 +695,122 @@ export function Create() {
                               )}
                             </div>
 
-                            {/* Content — collapsed preview unless selected */}
+                            {/* Content — textarea with formatting toolbar when selected */}
                             {isActive ? (
-                              <div className="text-sm text-foreground leading-relaxed whitespace-pre-wrap bg-muted/20 rounded-lg p-3 border border-border/40 max-h-80 overflow-y-auto">
-                                {v.content}
+                              <div className="space-y-2" onClick={(e) => e.stopPropagation()}>
+                                {/* Formatting toolbar */}
+                                <div className="flex items-center gap-1 p-1 bg-muted/40 rounded-lg w-fit">
+                                  <button
+                                    title="Bold — select text then click"
+                                    onClick={() => handleFormat("bold")}
+                                    className="flex items-center gap-1 px-2 py-1 rounded text-xs font-bold hover:bg-background transition-colors"
+                                  >
+                                    <Bold className="w-3.5 h-3.5" /> Bold
+                                  </button>
+                                  <button
+                                    title="Italic — select text then click"
+                                    onClick={() => handleFormat("italic")}
+                                    className="flex items-center gap-1 px-2 py-1 rounded text-xs italic hover:bg-background transition-colors"
+                                  >
+                                    <Italic className="w-3.5 h-3.5" /> Italic
+                                  </button>
+                                  {editedContents[v.version] !== undefined && (
+                                    <button
+                                      title="Reset to original"
+                                      onClick={() => setEditedContents((p) => { const n = {...p}; delete n[v.version]; return n; })}
+                                      className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:bg-background transition-colors"
+                                    >
+                                      <RotateCcw className="w-3 h-3" /> Reset
+                                    </button>
+                                  )}
+                                  <span className="text-xs text-muted-foreground/40 pl-1 hidden sm:inline">select text, then click</span>
+                                </div>
+                                <textarea
+                                  ref={textareaRef}
+                                  rows={10}
+                                  className="w-full resize-y rounded-lg border border-border/40 bg-muted/20 p-3 text-sm text-foreground leading-relaxed focus:outline-none focus:ring-1 focus:ring-primary"
+                                  value={getContent(v)}
+                                  onChange={(e) => setEditedContents((p) => ({ ...p, [v.version]: e.target.value }))}
+                                />
                               </div>
                             ) : (
                               <p className="text-sm text-muted-foreground line-clamp-3 leading-relaxed">
-                                {v.content}
+                                {getContent(v)}
                               </p>
                             )}
 
                             {/* Actions — only for selected */}
                             {isActive && (
-                              <div className="flex gap-2 pt-1">
-                                <Button size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); handleCopy(v); }}>
-                                  {isCopied ? (
-                                    <><CheckCheck className="w-4 h-4 mr-1.5 text-green-300" />Copied!</>
-                                  ) : (
-                                    <><Copy className="w-4 h-4 mr-1.5" />Copy Post</>
-                                  )}
-                                </Button>
-                                <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); handleDownload(v); }}>
-                                  <Download className="w-4 h-4" />
-                                </Button>
+                              <div className="space-y-2" onClick={(e) => e.stopPropagation()}>
+                                <div className="flex gap-2 flex-wrap">
+                                  <Button size="sm" className="flex-1 min-w-[100px]" onClick={() => handleCopy(v)}>
+                                    {isCopied ? (
+                                      <><CheckCheck className="w-4 h-4 mr-1.5 text-green-300" />Copied!</>
+                                    ) : (
+                                      <><Copy className="w-4 h-4 mr-1.5" />Copy Post</>
+                                    )}
+                                  </Button>
+                                  <Button size="sm" variant="outline" onClick={() => handleDownload(v)}>
+                                    <Download className="w-4 h-4" />
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="gap-1.5 text-blue-600 border-blue-200 hover:bg-blue-50"
+                                    onClick={() => setShowSchedule((s) => !s)}
+                                  >
+                                    <CalendarClock className="w-4 h-4" />
+                                    Schedule
+                                  </Button>
+                                </div>
+
+                                {/* Inline schedule picker */}
+                                {showSchedule && (
+                                  <div className="border border-blue-200 bg-blue-50 rounded-xl p-4 space-y-3">
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-sm font-semibold text-blue-800 flex items-center gap-1.5">
+                                        <Calendar className="w-4 h-4" />
+                                        Schedule this post
+                                      </span>
+                                      <button onClick={() => setShowSchedule(false)} className="text-blue-400 hover:text-blue-600">
+                                        <X className="w-4 h-4" />
+                                      </button>
+                                    </div>
+                                    <div className="flex gap-2 flex-wrap">
+                                      <input
+                                        type="date"
+                                        value={scheduleDate}
+                                        min={new Date().toISOString().split("T")[0]}
+                                        onChange={(e) => setScheduleDate(e.target.value)}
+                                        className="flex-1 min-w-[140px] rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                      />
+                                      <input
+                                        type="time"
+                                        value={scheduleTime}
+                                        onChange={(e) => setScheduleTime(e.target.value)}
+                                        className="w-[110px] rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                      />
+                                    </div>
+                                    <Button
+                                      size="sm"
+                                      className="w-full"
+                                      disabled={!scheduleDate || scheduleSaving}
+                                      onClick={handleScheduleSave}
+                                    >
+                                      {scheduleSaving ? (
+                                        <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Saving…</>
+                                      ) : scheduleSaved ? (
+                                        <><CheckCheck className="w-4 h-4 mr-1.5 text-green-300" />Scheduled!</>
+                                      ) : (
+                                        <><CalendarClock className="w-4 h-4 mr-1.5" />Confirm Schedule</>
+                                      )}
+                                    </Button>
+                                    <p className="text-xs text-blue-600 text-center">
+                                      View in{" "}
+                                      <Link to="/scheduled" className="underline hover:text-blue-800">Scheduled Posts</Link>
+                                    </p>
+                                  </div>
+                                )}
                               </div>
                             )}
                           </CardContent>

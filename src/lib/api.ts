@@ -49,6 +49,27 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+
+  getPersona: () => request<PersonaOut>("/persona/me"),
+
+  savePersona: (payload: PersonaUpdate) =>
+    request<PersonaOut>("/persona/save", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  schedulePost: (payload: SchedulePostRequest) =>
+    request<ScheduledPostOut>("/posts/schedule", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  getScheduled: () => request<ScheduledPostOut[]>("/posts/scheduled"),
+
+  updateScheduledStatus: (id: number, new_status: string) =>
+    request<ScheduledPostOut>(`/posts/scheduled/${id}/status?new_status=${new_status}`, {
+      method: "PATCH",
+    }),
 };
 
 // Types mirroring backend schemas
@@ -105,4 +126,33 @@ export interface TopicResponse {
   versions: PostVersion[];
   carousel_slides: CarouselSlide[];
   generated_content: string;
+}
+
+export interface PersonaUpdate {
+  linkedin_url?: string;
+  sample_posts: string[];
+}
+
+export interface PersonaOut {
+  linkedin_url?: string;
+  sample_posts: string[];
+  voice_profile?: string;
+  updated_at?: string;
+}
+
+export interface SchedulePostRequest {
+  content: string;
+  platform: string;
+  scheduled_for: string; // ISO datetime string
+  source_label?: string;
+}
+
+export interface ScheduledPostOut {
+  id: number;
+  content: string;
+  platform: string;
+  scheduled_for: string;
+  status: "pending" | "posted" | "cancelled";
+  source_label?: string;
+  created_at: string;
 }

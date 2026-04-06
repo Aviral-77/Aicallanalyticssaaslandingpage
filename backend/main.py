@@ -21,6 +21,7 @@ from database import engine, get_db
 from content_extractor import extract as extract_content
 from llm import generate_carousel, generate_from_topic, generate_post
 from logger import Timer, app_log, setup_logging
+from persona import analyze_voice
 from research import research_topic
 from search import build_search_query, format_search_context, search_web
 
@@ -31,18 +32,32 @@ models.Base.metadata.create_all(bind=engine)
 
 
 def _run_migrations() -> None:
-    """Add new columns to existing databases without dropping data."""
+    """Add new columns / tables to existing databases without dropping data."""
     migrations = [
         "ALTER TABLE repurposed_posts ADD COLUMN versions_json TEXT",
+        # UserPersona table (created by create_all, but guard in case of partial state)
+        (
+            "CREATE TABLE IF NOT EXISTS user_personas ("
+            "id INTEGER PRIMARY KEY, user_id INTEGER UNIQUE NOT NULL, "
+            "linkedin_url VARCHAR(500), sample_posts_json TEXT, "
+            "voice_profile TEXT, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)"
+        ),
+        (
+            "CREATE TABLE IF NOT EXISTS scheduled_posts ("
+            "id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, "
+            "content TEXT NOT NULL, platform VARCHAR(50) NOT NULL, "
+            "scheduled_for DATETIME NOT NULL, status VARCHAR(20) DEFAULT 'pending', "
+            "source_label VARCHAR(300), created_at DATETIME DEFAULT CURRENT_TIMESTAMP)"
+        ),
     ]
     with engine.connect() as conn:
         for stmt in migrations:
             try:
                 conn.execute(text(stmt))
                 conn.commit()
-                app_log.info("migration | applied: %s", stmt)
+                app_log.info("migration | applied: %s", stmt[:60])
             except Exception:
-                pass  # Column already exists — safe to ignore
+                pass  # Already exists — safe to ignore
 
 
 _run_migrations()
@@ -101,6 +116,141 @@ def get_me(current_user: models.User = Depends(auth.get_current_user)):
     return current_user
 
 
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _get_user_voice(user_id: int, db: Session) -> str:
+    """Return the stored voice profile for a user, or '' if none."""
+    persona = db.query(models.UserPersona).filter(
+        models.UserPersona.user_id == user_id
+    ).first()
+    return (persona.voice_profile or "") if persona else ""
+
+
+# ── Persona routes ──────────────────────────────────────────────────────────────
+
+@app.get("/persona/me", response_model=schemas.PersonaOut)
+def get_persona(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user),
+):
+    persona = db.query(models.UserPersona).filter(
+        models.UserPersona.user_id == current_user.id
+    ).first()
+    if not persona:
+        return schemas.PersonaOut(sample_posts=[], voice_profile=None)
+    sample_posts = json.loads(persona.sample_posts_json) if persona.sample_posts_json else []
+    return schemas.PersonaOut(
+        linkedin_url=persona.linkedin_url,
+        sample_posts=sample_posts,
+        voice_profile=persona.voice_profile,
+        updated_at=persona.updated_at,
+    )
+
+
+@app.post("/persona/save", response_model=schemas.PersonaOut)
+async def save_persona(
+    body: schemas.PersonaUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user),
+):
+    clean_posts = [p.strip() for p in body.sample_posts if p.strip()]
+
+    # Analyse voice with Gemini
+    voice_profile = await analyze_voice(clean_posts)
+
+    persona = db.query(models.UserPersona).filter(
+        models.UserPersona.user_id == current_user.id
+    ).first()
+
+    if persona:
+        persona.linkedin_url = body.linkedin_url
+        persona.sample_posts_json = json.dumps(clean_posts)
+        persona.voice_profile = voice_profile
+    else:
+        persona = models.UserPersona(
+            user_id=current_user.id,
+            linkedin_url=body.linkedin_url,
+            sample_posts_json=json.dumps(clean_posts),
+            voice_profile=voice_profile,
+        )
+        db.add(persona)
+
+    db.commit()
+    db.refresh(persona)
+    app_log.info("persona_saved | user_id=%d | posts=%d", current_user.id, len(clean_posts))
+
+    return schemas.PersonaOut(
+        linkedin_url=persona.linkedin_url,
+        sample_posts=clean_posts,
+        voice_profile=persona.voice_profile,
+        updated_at=persona.updated_at,
+    )
+
+
+# ── Schedule routes ─────────────────────────────────────────────────────────────
+
+@app.post("/posts/schedule", response_model=schemas.ScheduledPostOut, status_code=status.HTTP_201_CREATED)
+def schedule_post(
+    body: schemas.SchedulePostRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user),
+):
+    post = models.ScheduledPost(
+        user_id=current_user.id,
+        content=body.content,
+        platform=body.platform,
+        scheduled_for=body.scheduled_for,
+        source_label=body.source_label,
+        status="pending",
+    )
+    db.add(post)
+    db.commit()
+    db.refresh(post)
+    app_log.info(
+        "post_scheduled | user_id=%d | id=%d | platform=%s | for=%s",
+        current_user.id, post.id, post.platform, post.scheduled_for,
+    )
+    return post
+
+
+@app.get("/posts/scheduled", response_model=list[schemas.ScheduledPostOut])
+def list_scheduled(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user),
+):
+    return (
+        db.query(models.ScheduledPost)
+        .filter(
+            models.ScheduledPost.user_id == current_user.id,
+            models.ScheduledPost.status != "cancelled",
+        )
+        .order_by(models.ScheduledPost.scheduled_for.asc())
+        .all()
+    )
+
+
+@app.patch("/posts/scheduled/{post_id}/status", response_model=schemas.ScheduledPostOut)
+def update_scheduled_status(
+    post_id: int,
+    new_status: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user),
+):
+    """Mark a scheduled post as 'posted' or 'cancelled'."""
+    post = db.query(models.ScheduledPost).filter(
+        models.ScheduledPost.id == post_id,
+        models.ScheduledPost.user_id == current_user.id,
+    ).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Scheduled post not found")
+    if new_status not in ("posted", "cancelled", "pending"):
+        raise HTTPException(status_code=400, detail="Invalid status")
+    post.status = new_status
+    db.commit()
+    db.refresh(post)
+    return post
+
+
 # ── Content routes ─────────────────────────────────────────────────────────────
 
 @app.post("/content/repurpose", response_model=schemas.RepurposeResponse)
@@ -137,6 +287,7 @@ async def repurpose_content(
     search_context = format_search_context(search_results)
 
     # ── Step 3: Generate 3 versions concurrently ───────────────────────────────
+    user_voice = _get_user_voice(current_user.id, db)
     try:
         versions = await generate_post(
             content=extracted.content,
@@ -145,6 +296,7 @@ async def repurpose_content(
             tone=body.tone,
             source_type=body.source_type,
             search_context=search_context,
+            user_voice=user_voice,
         )
     except google_exceptions.PermissionDenied:
         raise HTTPException(status_code=503, detail="Invalid GEMINI_API_KEY.")
@@ -261,11 +413,13 @@ async def from_topic(
     research = await research_topic(body.topic)
 
     # ── Step 2: Generate post versions + carousel in parallel ──────────────────
+    user_voice = _get_user_voice(current_user.id, db)
     try:
         versions, carousel_slides = await generate_from_topic(
             topic=body.topic,
             tone=body.tone,
             research_context=research.context_str,
+            user_voice=user_voice,
         )
     except google_exceptions.PermissionDenied:
         raise HTTPException(status_code=503, detail="Invalid GEMINI_API_KEY.")

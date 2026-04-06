@@ -81,3 +81,40 @@ class TopicResponse(BaseModel):
     versions: list[PostVersion]
     carousel_slides: list[CarouselSlide]
     generated_content: str   # = versions[0].content for convenience
+
+
+# ── Persona ───────────────────────────────────────────────────────────────────
+
+class PersonaUpdate(BaseModel):
+    linkedin_url: Optional[str] = None
+    sample_posts: list[str]   # 1-5 raw post strings pasted by the user
+
+
+class PersonaOut(BaseModel):
+    linkedin_url: Optional[str] = None
+    sample_posts: list[str]
+    voice_profile: Optional[str] = None
+    updated_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+# ── Schedule ──────────────────────────────────────────────────────────────────
+
+class SchedulePostRequest(BaseModel):
+    content: str
+    platform: str
+    scheduled_for: datetime
+    source_label: Optional[str] = None   # e.g. "Topic: AI trends" or source URL
+
+
+class ScheduledPostOut(BaseModel):
+    id: int
+    content: str
+    platform: str
+    scheduled_for: datetime
+    status: str   # pending | posted | cancelled
+    source_label: Optional[str] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}

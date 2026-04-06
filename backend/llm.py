@@ -154,6 +154,7 @@ async def _generate_single_version(
     search_context: str,
     angle: dict,
     version_num: int,
+    user_voice: str = "",
 ) -> PostVersion:
     """Generate one post version. Decorated with @traceable for LangSmith."""
     tone_desc = TONE_DESCRIPTIONS.get(tone, TONE_DESCRIPTIONS["thought_leader"])
@@ -164,16 +165,22 @@ async def _generate_single_version(
         "blog":     "blog post",
         "article":  "article",
         "podcast":  "podcast episode",
+        "topic":    "research",
     }.get(source_type, "content")
 
     search_block = f"\n\n{search_context}" if search_context else ""
+    voice_block = (
+        "\n\nCRITICAL — This post must match the following user's personal writing voice exactly. "
+        f"Prioritise their voice over the general tone instruction above:\n{user_voice}\n"
+    ) if user_voice else ""
 
     prompt = (
         f"Repurpose the following {source_label} into a {platform} post.\n\n"
         f"Title: {title}\n\n"
         f"--- MAIN CONTENT ---\n{content}\n--- END CONTENT ---"
         f"{search_block}\n\n"
-        f"Write in the voice of {tone_desc}\n\n"
+        f"Write in the voice of {tone_desc}"
+        f"{voice_block}\n\n"
         f"Structural angle for THIS version:\n{angle['instruction']}\n\n"
         f"{platform_instr}"
     )
@@ -235,14 +242,15 @@ async def generate_post(
     tone: str,
     source_type: str,
     search_context: str = "",
+    user_voice: str = "",
 ) -> list[PostVersion]:
     """
     Generate 3 post versions concurrently — one per structural angle.
     Returns list ordered [hook_insights, story_arc, bold_take].
     """
     llm_log.info(
-        "generate_post | title=%r | platform=%s | tone=%s | source_type=%s | search_ctx=%d chars",
-        title, platform, tone, source_type, len(search_context),
+        "generate_post | title=%r | platform=%s | tone=%s | source_type=%s | search_ctx=%d chars | voice=%s",
+        title, platform, tone, source_type, len(search_context), bool(user_voice),
     )
 
     tasks = [
@@ -255,6 +263,7 @@ async def generate_post(
             search_context=search_context,
             angle=angle,
             version_num=i + 1,
+            user_voice=user_voice,
         )
         for i, angle in enumerate(ANGLES)
     ]
@@ -412,14 +421,15 @@ async def generate_from_topic(
     topic: str,
     tone: str,
     research_context: str,
+    user_voice: str = "",
 ) -> tuple[list[PostVersion], list[CarouselSlide]]:
     """
     Generate 3 LinkedIn post versions + a carousel in parallel.
     Returns (versions, carousel_slides).
     """
     llm_log.info(
-        "generate_from_topic | topic=%r | tone=%s | research_chars=%d",
-        topic, tone, len(research_context),
+        "generate_from_topic | topic=%r | tone=%s | research_chars=%d | voice=%s",
+        topic, tone, len(research_context), bool(user_voice),
     )
 
     post_tasks = [
@@ -432,6 +442,7 @@ async def generate_from_topic(
             search_context="",  # already embedded in research_context
             angle=angle,
             version_num=i + 1,
+            user_voice=user_voice,
         )
         for i, angle in enumerate(ANGLES)
     ]
