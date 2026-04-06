@@ -4,6 +4,8 @@ import { Landing } from "./pages/Landing";
 import { Login } from "./pages/Login";
 import { Register } from "./pages/Register";
 import { Create } from "./pages/Create";
+import { Settings } from "./pages/Settings";
+import { Scheduled } from "./pages/Scheduled";
 import { Loader2 } from "lucide-react";
 import { ReactNode } from "react";
 
@@ -58,6 +60,22 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <Create />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings"
+        element={
+          <ProtectedRoute>
+            <Settings />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/scheduled"
+        element={
+          <ProtectedRoute>
+            <Scheduled />
           </ProtectedRoute>
         }
       />

@@ -26,3 +26,30 @@ class RepurposedPost(Base):
     generated_content = Column(Text, nullable=False)    # first version (backward compat)
     versions_json = Column(Text, nullable=True)         # JSON array of PostVersion dicts
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class UserPersona(Base):
+    """Stores a user's sample LinkedIn posts and the AI-derived voice profile."""
+    __tablename__ = "user_personas"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, unique=True, nullable=False, index=True)
+    linkedin_url = Column(String(500), nullable=True)
+    sample_posts_json = Column(Text, nullable=True)   # JSON array of post strings
+    voice_profile = Column(Text, nullable=True)        # AI-generated style description
+    updated_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ScheduledPost(Base):
+    """A generated post queued for a specific date/time."""
+    __tablename__ = "scheduled_posts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    content = Column(Text, nullable=False)
+    platform = Column(String(50), nullable=False)
+    scheduled_for = Column(DateTime(timezone=True), nullable=False)
+    status = Column(String(20), nullable=False, default="pending")  # pending | posted | cancelled
+    source_label = Column(String(300), nullable=True)  # e.g. "Topic: AI trends"
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
