@@ -21,7 +21,8 @@ from database import engine, get_db
 from content_extractor import extract as extract_content
 from llm import generate_carousel, generate_from_topic, generate_post
 from logger import Timer, app_log, setup_logging
-from persona import analyze_voice
+from linkedin_scraper import scrape_posts
+from persona import analyze_voice, voice_prompt_block
 from research import research_topic
 from search import build_search_query, format_search_context, search_web
 
@@ -119,11 +120,32 @@ def get_me(current_user: models.User = Depends(auth.get_current_user)):
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _get_user_voice(user_id: int, db: Session) -> str:
-    """Return the stored voice profile for a user, or '' if none."""
+    """Return the prompt-ready voice block for a user, or '' if none."""
     persona = db.query(models.UserPersona).filter(
         models.UserPersona.user_id == user_id
     ).first()
-    return (persona.voice_profile or "") if persona else ""
+    if not persona or not persona.voice_profile:
+        return ""
+    return voice_prompt_block(persona.voice_profile)
+
+
+def _persona_to_out(persona: models.UserPersona) -> schemas.PersonaOut:
+    """Convert a DB UserPersona row to PersonaOut schema."""
+    sample_posts = json.loads(persona.sample_posts_json) if persona.sample_posts_json else []
+    voice_profile: schemas.VoiceProfile | None = None
+    if persona.voice_profile:
+        try:
+            vp_data = json.loads(persona.voice_profile)
+            voice_profile = schemas.VoiceProfile(**vp_data)
+        except Exception:
+            pass
+    return schemas.PersonaOut(
+        linkedin_url=persona.linkedin_url,
+        sample_posts=sample_posts,
+        voice_profile=voice_profile,
+        has_profile=bool(voice_profile),
+        updated_at=persona.updated_at,
+    )
 
 
 # ── Persona routes ──────────────────────────────────────────────────────────────
@@ -137,14 +159,18 @@ def get_persona(
         models.UserPersona.user_id == current_user.id
     ).first()
     if not persona:
-        return schemas.PersonaOut(sample_posts=[], voice_profile=None)
-    sample_posts = json.loads(persona.sample_posts_json) if persona.sample_posts_json else []
-    return schemas.PersonaOut(
-        linkedin_url=persona.linkedin_url,
-        sample_posts=sample_posts,
-        voice_profile=persona.voice_profile,
-        updated_at=persona.updated_at,
-    )
+        return schemas.PersonaOut(sample_posts=[], has_profile=False)
+    return _persona_to_out(persona)
+
+
+@app.post("/persona/scrape-linkedin", response_model=schemas.ScrapeLinkedinResponse)
+async def scrape_linkedin(
+    body: schemas.ScrapeLinkedinRequest,
+    current_user: models.User = Depends(auth.get_current_user),
+):
+    """Scrape recent posts from a public LinkedIn profile using Playwright."""
+    result = await scrape_posts(body.profile_url, max_posts=5)
+    return schemas.ScrapeLinkedinResponse(posts=result.posts, error=result.error)
 
 
 @app.post("/persona/save", response_model=schemas.PersonaOut)
@@ -155,8 +181,9 @@ async def save_persona(
 ):
     clean_posts = [p.strip() for p in body.sample_posts if p.strip()]
 
-    # Analyse voice with Gemini
-    voice_profile = await analyze_voice(clean_posts)
+    # Analyse voice with Gemini → returns a dict
+    voice_dict = await analyze_voice(clean_posts)
+    voice_profile_json = json.dumps(voice_dict) if voice_dict else None
 
     persona = db.query(models.UserPersona).filter(
         models.UserPersona.user_id == current_user.id
@@ -165,26 +192,20 @@ async def save_persona(
     if persona:
         persona.linkedin_url = body.linkedin_url
         persona.sample_posts_json = json.dumps(clean_posts)
-        persona.voice_profile = voice_profile
+        persona.voice_profile = voice_profile_json
     else:
         persona = models.UserPersona(
             user_id=current_user.id,
             linkedin_url=body.linkedin_url,
             sample_posts_json=json.dumps(clean_posts),
-            voice_profile=voice_profile,
+            voice_profile=voice_profile_json,
         )
         db.add(persona)
 
     db.commit()
     db.refresh(persona)
     app_log.info("persona_saved | user_id=%d | posts=%d", current_user.id, len(clean_posts))
-
-    return schemas.PersonaOut(
-        linkedin_url=persona.linkedin_url,
-        sample_posts=clean_posts,
-        voice_profile=persona.voice_profile,
-        updated_at=persona.updated_at,
-    )
+    return _persona_to_out(persona)
 
 
 # ── Schedule routes ─────────────────────────────────────────────────────────────

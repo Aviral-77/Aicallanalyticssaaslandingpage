@@ -1,10 +1,9 @@
 import { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-import { api, PersonaOut } from "../lib/api";
+import { api, PersonaOut, VoiceProfile } from "../lib/api";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
-import { Label } from "../components/ui/label";
 import { Card, CardContent } from "../components/ui/card";
 import {
   Sparkles,
@@ -18,8 +17,167 @@ import {
   Plus,
   Trash2,
   CalendarClock,
+  Download,
+  ChevronDown,
+  ChevronUp,
+  Zap,
+  MessageSquare,
+  AlignLeft,
+  Hash,
+  Target,
+  RefreshCw,
+  User,
 } from "lucide-react";
 
+// ── Tone badge colours ─────────────────────────────────────────────────────────
+const TONE_COLORS: Record<string, string> = {
+  thought_leader: "bg-purple-100 text-purple-700 border-purple-200",
+  casual:         "bg-green-100  text-green-700  border-green-200",
+  storytelling:   "bg-orange-100 text-orange-700 border-orange-200",
+  data_driven:    "bg-blue-100   text-blue-700   border-blue-200",
+  contrarian:     "bg-red-100    text-red-700    border-red-200",
+};
+
+// ── Voice profile card ─────────────────────────────────────────────────────────
+function VoiceProfileCard({ profile }: { profile: VoiceProfile }) {
+  const toneClass = TONE_COLORS[profile.tone] ?? "bg-gray-100 text-gray-700 border-gray-200";
+
+  const sections = [
+    { icon: Zap,          label: "Hook Style",    value: profile.hook_style    },
+    { icon: AlignLeft,    label: "Sentences",      value: profile.sentence_style },
+    { icon: Brain,        label: "Structure",      value: profile.structure     },
+    { icon: MessageSquare,label: "Formatting",     value: profile.formatting    },
+    { icon: Target,       label: "CTA Style",      value: profile.cta_style     },
+  ].filter((s) => s.value);
+
+  return (
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="flex items-start gap-4">
+        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center flex-shrink-0 shadow-md">
+          <Brain className="w-6 h-6 text-white" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap mb-1">
+            <h3 className="font-bold text-gray-900 text-base">Your Voice Profile</h3>
+            <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${toneClass}`}>
+              {profile.tone_label || profile.tone}
+            </span>
+          </div>
+          <p className="text-sm text-gray-600 leading-relaxed">{profile.summary}</p>
+        </div>
+      </div>
+
+      {/* Grid sections */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {sections.map(({ icon: Icon, label, value }) => (
+          <div key={label} className="bg-gray-50 rounded-xl p-3.5 border border-gray-100">
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <Icon className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{label}</span>
+            </div>
+            <p className="text-sm text-gray-700 leading-snug">{value}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Key phrases */}
+      {profile.key_phrases.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-1.5">
+            <Hash className="w-3.5 h-3.5 text-primary" />
+            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Key Phrases</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {profile.key_phrases.map((phrase) => (
+              <span
+                key={phrase}
+                className="text-xs px-3 py-1.5 rounded-full bg-primary/8 text-primary border border-primary/20 font-medium"
+              >
+                "{phrase}"
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <p className="text-xs text-gray-400 flex items-center gap-1">
+        <Sparkles className="w-3 h-3" />
+        Active — all generated posts will match this voice
+      </p>
+    </div>
+  );
+}
+
+// ── Post sample card ───────────────────────────────────────────────────────────
+function PostCard({
+  index,
+  value,
+  onChange,
+  onRemove,
+  canRemove,
+}: {
+  index: number;
+  value: string;
+  onChange: (v: string) => void;
+  onRemove: () => void;
+  canRemove: boolean;
+}) {
+  const [expanded, setExpanded] = useState(index === 0 || value.length === 0);
+  const preview = value.trim().slice(0, 120);
+
+  return (
+    <div className="border border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm">
+      {/* Card header */}
+      <div
+        className="flex items-center justify-between px-4 py-3 bg-gray-50 cursor-pointer select-none"
+        onClick={() => value && setExpanded((e) => !e)}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="w-5 h-5 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+            <span className="text-xs font-bold text-primary">{index + 1}</span>
+          </div>
+          {value ? (
+            <p className="text-sm text-gray-600 truncate">{preview}{preview.length < value.trim().length ? "…" : ""}</p>
+          ) : (
+            <p className="text-sm text-gray-400 italic">Empty — paste a post</p>
+          )}
+        </div>
+        <div className="flex items-center gap-1 flex-shrink-0 ml-2">
+          {canRemove && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onRemove(); }}
+              className="p-1 rounded text-gray-400 hover:text-red-500 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {value && (
+            expanded
+              ? <ChevronUp className="w-4 h-4 text-gray-400" />
+              : <ChevronDown className="w-4 h-4 text-gray-400" />
+          )}
+        </div>
+      </div>
+
+      {/* Textarea */}
+      {expanded && (
+        <div className="p-3">
+          <textarea
+            autoFocus={!value}
+            rows={6}
+            className="w-full resize-none text-sm text-gray-800 placeholder:text-gray-300 focus:outline-none leading-relaxed"
+            placeholder={`Paste LinkedIn post #${index + 1} here…`}
+            value={value}
+            onChange={(e) => { onChange(e.target.value); }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main component ─────────────────────────────────────────────────────────────
 export function Settings() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -27,10 +185,17 @@ export function Settings() {
   const [linkedinUrl, setLinkedinUrl] = useState("");
   const [posts, setPosts] = useState<string[]>(["", "", ""]);
   const [persona, setPersona] = useState<PersonaOut | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Scraping state
+  const [isScraping, setIsScraping] = useState(false);
+  const [scrapeError, setScrapeError] = useState("");
+  const [scrapeSuccess, setScrapeSuccess] = useState(false);
+
+  // Saving state
+  const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [error, setError] = useState("");
+  const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
     api.getPersona()
@@ -38,23 +203,47 @@ export function Settings() {
         setPersona(p);
         setLinkedinUrl(p.linkedin_url ?? "");
         if (p.sample_posts.length > 0) {
-          // Pad to at least 3 slots
           const padded = [...p.sample_posts];
           while (padded.length < 3) padded.push("");
           setPosts(padded);
         }
       })
-      .catch(() => {}) // no persona yet — fine
+      .catch(() => {})
       .finally(() => setIsLoading(false));
   }, []);
+
+  const handleScrape = async () => {
+    if (!linkedinUrl.trim()) return;
+    setScrapeError("");
+    setScrapeSuccess(false);
+    setIsScraping(true);
+    try {
+      const res = await api.scrapeLinkedin(linkedinUrl.trim());
+      if (res.error) {
+        setScrapeError(res.error);
+      } else if (res.posts.length === 0) {
+        setScrapeError("No posts found on this profile. Try pasting them manually.");
+      } else {
+        const padded = [...res.posts];
+        while (padded.length < 3) padded.push("");
+        setPosts(padded);
+        setScrapeSuccess(true);
+        setTimeout(() => setScrapeSuccess(false), 3000);
+      }
+    } catch (err: unknown) {
+      setScrapeError(err instanceof Error ? err.message : "Scraping failed");
+    } finally {
+      setIsScraping(false);
+    }
+  };
 
   const handleSave = async () => {
     const cleanPosts = posts.filter((p) => p.trim().length > 0);
     if (cleanPosts.length === 0) {
-      setError("Paste at least one LinkedIn post so Repost AI can learn your voice.");
+      setSaveError("Add at least one LinkedIn post so Repost AI can learn your voice.");
       return;
     }
-    setError("");
+    setSaveError("");
     setIsSaving(true);
     try {
       const updated = await api.savePersona({
@@ -65,7 +254,7 @@ export function Settings() {
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Save failed");
+      setSaveError(err instanceof Error ? err.message : "Save failed");
     } finally {
       setIsSaving(false);
     }
@@ -76,13 +265,15 @@ export function Settings() {
   const updatePost = (i: number, val: string) =>
     setPosts((p) => p.map((v, idx) => (idx === i ? val : v)));
 
+  const filledCount = posts.filter((p) => p.trim().length > 0).length;
+
   return (
-    <div className="min-h-screen bg-muted/20">
+    <div className="min-h-screen bg-gradient-to-b from-blue-50/40 to-white">
       {/* Top bar */}
-      <header className="border-b bg-background/95 backdrop-blur sticky top-0 z-50">
+      <header className="border-b bg-white/80 backdrop-blur sticky top-0 z-50">
         <div className="container mx-auto max-w-3xl px-4 flex h-14 items-center justify-between">
           <div className="flex items-center gap-3">
-            <Link to="/create" className="text-muted-foreground hover:text-foreground transition-colors">
+            <Link to="/create" className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-md">
               <ArrowLeft className="w-4 h-4" />
             </Link>
             <div className="flex items-center space-x-2">
@@ -92,131 +283,202 @@ export function Settings() {
               <span className="font-semibold">Repost AI</span>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <Link to="/scheduled" className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+          <div className="flex items-center gap-2">
+            <Link to="/scheduled" className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground px-2 py-1 rounded-md transition-colors">
               <CalendarClock className="w-4 h-4" />
               <span className="hidden sm:inline">Scheduled</span>
             </Link>
             <Button variant="ghost" size="sm" onClick={() => { logout(); navigate("/"); }}
               className="text-muted-foreground hover:text-foreground">
-              <LogOut className="w-4 h-4 mr-1.5" />Sign out
+              <LogOut className="w-4 h-4 mr-1" />
+              <span className="hidden sm:inline">Sign out</span>
             </Button>
           </div>
         </div>
       </header>
 
-      <main className="container mx-auto max-w-3xl px-4 py-10 space-y-8">
-        <div>
-          <h1 className="text-2xl font-bold">Voice Settings</h1>
-          <p className="text-muted-foreground mt-1">
-            Link your LinkedIn profile and paste 3-4 of your recent posts.
-            Repost AI will learn your writing style and match it in every generated post.
-          </p>
+      <main className="container mx-auto max-w-3xl px-4 py-10 space-y-10">
+
+        {/* Hero section */}
+        <div className="flex items-start gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary to-purple-600 flex items-center justify-center shadow-lg flex-shrink-0">
+            <User className="w-6 h-6 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Voice Settings</h1>
+            <p className="text-gray-500 mt-1 text-sm leading-relaxed">
+              Link your LinkedIn profile to auto-import your recent posts, or paste them manually.
+              Repost AI analyses your writing style and matches it in every generated post.
+            </p>
+          </div>
         </div>
 
         {isLoading ? (
-          <div className="flex items-center justify-center py-20">
-            <Loader2 className="w-6 h-6 animate-spin text-primary" />
+          <div className="flex items-center justify-center py-24">
+            <div className="flex flex-col items-center gap-3">
+              <Loader2 className="w-8 h-8 animate-spin text-primary" />
+              <p className="text-sm text-gray-400">Loading your profile…</p>
+            </div>
           </div>
         ) : (
           <div className="space-y-8">
-            {/* Voice profile banner */}
+
+            {/* ── Active voice profile ───────────────────────────────────────── */}
             {persona?.voice_profile && (
-              <Card className="border-green-200 bg-green-50">
-                <CardContent className="p-4 space-y-2">
-                  <div className="flex items-center gap-2 text-green-700 font-semibold text-sm">
-                    <Brain className="w-4 h-4" />
-                    Voice Profile Active
-                  </div>
-                  <p className="text-sm text-green-800 leading-relaxed">{persona.voice_profile}</p>
-                  <p className="text-xs text-green-600">
-                    All generated posts will match this voice. Update your sample posts below to refine it.
-                  </p>
+              <Card className="border-0 shadow-md bg-gradient-to-br from-white to-blue-50/60 overflow-hidden">
+                <CardContent className="p-6">
+                  <VoiceProfileCard profile={persona.voice_profile} />
                 </CardContent>
+                <div className="h-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500" />
               </Card>
             )}
 
-            {/* LinkedIn URL */}
-            <section className="space-y-3">
-              <div className="flex items-center gap-2">
-                <div className="w-6 h-6 rounded bg-blue-600 flex items-center justify-center flex-shrink-0">
-                  <Linkedin className="w-3.5 h-3.5 text-white" />
+            {/* ── LinkedIn section ───────────────────────────────────────────── */}
+            <Card className="border border-gray-200 shadow-sm">
+              <CardContent className="p-6 space-y-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center">
+                    <Linkedin className="w-4 h-4 text-white" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-bold text-gray-900">LinkedIn Profile</h2>
+                    <p className="text-xs text-gray-500">Paste your URL to auto-import recent posts</p>
+                  </div>
                 </div>
-                <Label className="text-sm font-semibold">LinkedIn Profile URL</Label>
-              </div>
-              <Input
-                type="url"
-                placeholder="https://linkedin.com/in/yourhandle"
-                value={linkedinUrl}
-                onChange={(e) => setLinkedinUrl(e.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">
-                Optional — used to personalise your profile context.
-              </p>
-            </section>
 
-            {/* Sample posts */}
-            <section className="space-y-3">
-              <div>
-                <Label className="text-sm font-semibold">Your Recent LinkedIn Posts</Label>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Paste 3-4 posts you've written. Repost AI will analyse your tone, structure,
-                  and phrasing to write all new posts in your exact style.
-                </p>
+                <div className="flex gap-2">
+                  <Input
+                    type="url"
+                    placeholder="https://linkedin.com/in/yourhandle"
+                    value={linkedinUrl}
+                    onChange={(e) => setLinkedinUrl(e.target.value)}
+                    className="flex-1"
+                    onKeyDown={(e) => e.key === "Enter" && handleScrape()}
+                  />
+                  <Button
+                    variant="outline"
+                    onClick={handleScrape}
+                    disabled={!linkedinUrl.trim() || isScraping}
+                    className="gap-2 border-blue-200 text-blue-700 hover:bg-blue-50 flex-shrink-0"
+                  >
+                    {isScraping ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" />Scraping…</>
+                    ) : scrapeSuccess ? (
+                      <><CheckCheck className="w-4 h-4 text-green-500" />Imported!</>
+                    ) : (
+                      <><Download className="w-4 h-4" />Import Posts</>
+                    )}
+                  </Button>
+                </div>
+
+                {scrapeError && (
+                  <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 text-amber-800 text-xs px-4 py-3 rounded-xl">
+                    <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-500" />
+                    <span>{scrapeError}</span>
+                  </div>
+                )}
+
+                {scrapeSuccess && (
+                  <div className="flex items-center gap-2 bg-green-50 border border-green-200 text-green-700 text-xs px-4 py-3 rounded-xl">
+                    <CheckCheck className="w-4 h-4" />
+                    <span>Successfully imported {posts.filter((p) => p.trim()).length} posts! Review them below.</span>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* ── Posts section ─────────────────────────────────────────────── */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-bold text-gray-900">
+                    Sample Posts
+                    {filledCount > 0 && (
+                      <span className="ml-2 text-xs font-normal text-gray-400">
+                        {filledCount} added
+                      </span>
+                    )}
+                  </h2>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Add 3-5 posts you've written. More = better voice match.
+                  </p>
+                </div>
+                {persona?.has_profile && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-xs text-gray-400 gap-1"
+                    onClick={handleSave}
+                    disabled={isSaving}
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    Re-analyse
+                  </Button>
+                )}
               </div>
 
               <div className="space-y-3">
                 {posts.map((post, i) => (
-                  <div key={i} className="relative">
-                    <textarea
-                      rows={5}
-                      className="w-full resize-none rounded-xl border border-border/60 bg-background px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent placeholder:text-muted-foreground/50"
-                      placeholder={`Post ${i + 1} — paste your LinkedIn post here`}
-                      value={post}
-                      onChange={(e) => updatePost(i, e.target.value)}
-                    />
-                    {posts.length > 1 && (
-                      <button
-                        onClick={() => removePost(i)}
-                        className="absolute top-2 right-2 text-muted-foreground hover:text-destructive transition-colors p-1 rounded"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
+                  <PostCard
+                    key={i}
+                    index={i}
+                    value={post}
+                    onChange={(v) => updatePost(i, v)}
+                    onRemove={() => removePost(i)}
+                    canRemove={posts.length > 1}
+                  />
                 ))}
               </div>
 
               {posts.length < 6 && (
-                <Button variant="outline" size="sm" onClick={addPost} className="gap-1.5">
-                  <Plus className="w-3.5 h-3.5" />
+                <button
+                  onClick={addPost}
+                  className="w-full flex items-center justify-center gap-2 py-3 border-2 border-dashed border-gray-200 rounded-xl text-sm text-gray-400 hover:border-primary/40 hover:text-primary transition-colors"
+                >
+                  <Plus className="w-4 h-4" />
                   Add another post
-                </Button>
+                </button>
               )}
-            </section>
+            </div>
 
-            {error && (
-              <div className="flex items-start gap-2 text-destructive text-sm bg-destructive/10 px-4 py-3 rounded-xl">
+            {/* ── Save / analyse ─────────────────────────────────────────────── */}
+            {saveError && (
+              <div className="flex items-start gap-2 text-red-700 text-sm bg-red-50 border border-red-200 px-4 py-3 rounded-xl">
                 <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                <span>{error}</span>
+                <span>{saveError}</span>
               </div>
             )}
 
-            <Button size="lg" onClick={handleSave} disabled={isSaving} className="gap-2">
+            <Button
+              size="lg"
+              onClick={handleSave}
+              disabled={isSaving}
+              className="w-full sm:w-auto gap-2 bg-gradient-to-r from-primary to-purple-600 hover:opacity-90 transition-opacity shadow-md"
+            >
               {isSaving ? (
-                <><Loader2 className="w-4 h-4 animate-spin" />Analysing your voice…</>
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Analysing your voice…
+                </>
               ) : saved ? (
-                <><CheckCheck className="w-4 h-4 text-green-300" />Voice profile saved!</>
+                <>
+                  <CheckCheck className="w-4 h-4" />
+                  Voice profile saved!
+                </>
               ) : (
-                <><Brain className="w-4 h-4" />Analyse & Save My Voice</>
+                <>
+                  <Brain className="w-4 h-4" />
+                  {persona?.has_profile ? "Update Voice Profile" : "Analyse & Build Voice Profile"}
+                </>
               )}
             </Button>
 
-            {!persona?.voice_profile && (
-              <p className="text-xs text-muted-foreground">
-                Gemini will analyse your posts and create a voice profile. This takes about 5 seconds.
+            {!persona?.has_profile && (
+              <p className="text-xs text-gray-400 text-center">
+                Gemini reads your posts and creates a personal style guide. Takes ~5 seconds.
               </p>
             )}
+
           </div>
         )}
       </main>
