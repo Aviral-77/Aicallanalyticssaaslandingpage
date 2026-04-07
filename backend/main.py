@@ -36,7 +36,10 @@ def _run_migrations() -> None:
     """Add new columns / tables to existing databases without dropping data."""
     migrations = [
         "ALTER TABLE repurposed_posts ADD COLUMN versions_json TEXT",
-        # UserPersona table (created by create_all, but guard in case of partial state)
+        # Credits + onboarding — DEFAULT 10 / DEFAULT 1 so existing users keep access
+        "ALTER TABLE users ADD COLUMN credits INTEGER NOT NULL DEFAULT 10",
+        "ALTER TABLE users ADD COLUMN onboarding_complete BOOLEAN NOT NULL DEFAULT 1",
+        # UserPersona table
         (
             "CREATE TABLE IF NOT EXISTS user_personas ("
             "id INTEGER PRIMARY KEY, user_id INTEGER UNIQUE NOT NULL, "
@@ -117,7 +120,104 @@ def get_me(current_user: models.User = Depends(auth.get_current_user)):
     return current_user
 
 
+@app.post("/auth/complete-onboarding", response_model=schemas.UserOut)
+def complete_onboarding(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user),
+):
+    current_user.onboarding_complete = True
+    db.commit()
+    db.refresh(current_user)
+    return current_user
+
+
+@app.post("/persona/suggest-topics", response_model=schemas.SuggestTopicsResponse)
+async def suggest_topics_endpoint(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user),
+):
+    """Generate 6 post topic suggestions based on the user's voice profile. Free — no credit cost."""
+    persona = db.query(models.UserPersona).filter(
+        models.UserPersona.user_id == current_user.id
+    ).first()
+
+    voice_summary = ""
+    tone_label = "Thought Leader"
+    if persona and persona.voice_profile:
+        try:
+            vp = json.loads(persona.voice_profile)
+            voice_summary = vp.get("summary", "")
+            tone_label = vp.get("tone_label", "Thought Leader")
+        except Exception:
+            pass
+
+    topics = await _generate_topic_suggestions(
+        name=current_user.name,
+        voice_summary=voice_summary,
+        tone_label=tone_label,
+    )
+    return schemas.SuggestTopicsResponse(topics=topics)
+
+
+async def _generate_topic_suggestions(name: str, voice_summary: str, tone_label: str) -> list[dict]:
+    """Use Gemini to generate 6 personalized LinkedIn post topic ideas."""
+    import google.generativeai as genai
+    if not os.getenv("GEMINI_API_KEY"):
+        return _fallback_topics()
+
+    voice_block = f"Their writing style: {voice_summary}" if voice_summary else ""
+    prompt = (
+        f"Generate 6 compelling LinkedIn post topic ideas for {name}, "
+        f"a {tone_label}-style creator.\n"
+        f"{voice_block}\n\n"
+        "For each topic return a JSON object with:\n"
+        '  "topic": short topic phrase (max 10 words)\n'
+        '  "hook": a one-sentence attention-grabbing opener\n'
+        '  "why": one sentence on why this will perform well\n\n'
+        "Return ONLY a JSON array of 6 objects. No markdown, no explanation."
+    )
+    try:
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        model = genai.GenerativeModel(
+            model_name="gemini-2.0-flash",
+            system_instruction="You are a LinkedIn content strategist. Output only valid JSON.",
+        )
+        response = await model.generate_content_async(
+            prompt,
+            generation_config=genai.types.GenerationConfig(max_output_tokens=800),
+        )
+        raw = response.text.strip() if response.text else "[]"
+        import re
+        cleaned = re.sub(r"^```[a-z]*\n?|```$", "", raw, flags=re.MULTILINE).strip()
+        data = json.loads(cleaned)
+        return data if isinstance(data, list) else _fallback_topics()
+    except Exception:
+        return _fallback_topics()
+
+
+def _fallback_topics() -> list[dict]:
+    return [
+        {"topic": "3 lessons I learned shipping my first product", "hook": "Shipping broke everything I thought I knew.", "why": "Personal story posts get 3× more comments."},
+        {"topic": "Why most developers avoid personal branding", "hook": "Most devs are invisible online — and it's costing them.", "why": "Contrarian takes drive high engagement."},
+        {"topic": "The one habit that doubled my productivity", "hook": "I stopped doing one thing and everything changed.", "why": "Productivity content consistently goes viral."},
+        {"topic": "What nobody tells you about building in public", "hook": "Building in public sounds great until it isn't.", "why": "Authenticity + pain points = relatability."},
+        {"topic": "5 tools I use every single day as a developer", "hook": "My entire workflow fits in 5 tools — here's the list.", "why": "List posts are highly shareable and saveable."},
+        {"topic": "How I grew my LinkedIn from 0 to 1k followers", "hook": "Zero followers, zero strategy — here's what actually worked.", "why": "Growth stories attract massive reach."},
+    ]
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _deduct_credit(user: models.User, db: Session) -> None:
+    """Raise 402 if no credits remain, then deduct 1 credit and commit."""
+    if user.credits <= 0:
+        raise HTTPException(
+            status_code=402,
+            detail="No credits remaining. Please upgrade your plan to keep generating.",
+        )
+    user.credits -= 1
+    db.commit()
+
 
 def _get_user_voice(user_id: int, db: Session) -> str:
     """Return the prompt-ready voice block for a user, or '' if none."""
@@ -286,6 +386,8 @@ async def repurpose_content(
             detail="GEMINI_API_KEY is not configured. Add it to your .env file.",
         )
 
+    _deduct_credit(current_user, db)
+
     timer = Timer()
     app_log.info(
         "repurpose_start | user_id=%d | source_type=%s | platform=%s | tone=%s | url=%s",
@@ -423,6 +525,8 @@ async def from_topic(
             status_code=503,
             detail="GEMINI_API_KEY is not configured. Add it to your .env file.",
         )
+
+    _deduct_credit(current_user, db)
 
     timer = Timer()
     app_log.info(

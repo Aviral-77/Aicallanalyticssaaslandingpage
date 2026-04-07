@@ -21,9 +21,15 @@ class UserOut(BaseModel):
     name: str
     email: str
     linkedin_url: Optional[str] = None
+    credits: int = 10
+    onboarding_complete: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class SuggestTopicsResponse(BaseModel):
+    topics: list[dict]   # [{topic, hook, why}]
 
 
 class Token(BaseModel):

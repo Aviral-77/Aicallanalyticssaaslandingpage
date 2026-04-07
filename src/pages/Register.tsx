@@ -34,7 +34,7 @@ export function Register() {
     setIsLoading(true);
     try {
       await register(name, email, password);
-      navigate("/create");
+      navigate("/onboarding");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Registration failed");
     } finally {
