@@ -1,8 +1,9 @@
 import { useState, useRef } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, Link, useLocation } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-import { api, PostVersion, RepurposeResponse, TopicResponse } from "../lib/api";
+import { api, ApiError, PostVersion, RepurposeResponse, TopicResponse } from "../lib/api";
 import { CarouselPreview } from "../components/CarouselPreview";
+import { UpgradeModal } from "../components/UpgradeModal";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -37,6 +38,7 @@ import {
   RotateCcw,
   Calendar,
   X,
+  Coins,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -115,12 +117,17 @@ const TONES = [
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function Create() {
-  const { user, logout } = useAuth();
+  const { user, logout, refreshUser } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   // Form state
-  const [selectedType, setSelectedType] = useState<SourceType | null>(null);
-  const [url, setUrl] = useState("");
+  const [selectedType, setSelectedType] = useState<SourceType | null>(() =>
+    (location.state as { prefillTopic?: string } | null)?.prefillTopic ? "topic" : null
+  );
+  const [url, setUrl] = useState<string>(() =>
+    (location.state as { prefillTopic?: string } | null)?.prefillTopic ?? ""
+  );
   const [platform, setPlatform] = useState<Platform>("linkedin");
   const [tone, setTone] = useState("thought_leader");
 
@@ -140,6 +147,10 @@ export function Create() {
   // Per-version edited content (for formatting toolbar)
   const [editedContents, setEditedContents] = useState<Record<number, string>>({});
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Upgrade modal state
+  const [showUpgrade, setShowUpgrade] = useState(false);
+  const [upgradeReason, setUpgradeReason] = useState<"out_of_credits" | "upgrade_click">("upgrade_click");
 
   // Schedule modal state
   const [showSchedule, setShowSchedule] = useState(false);
@@ -212,8 +223,14 @@ export function Create() {
         const res = await api.fromTopic({ topic: url.trim(), tone });
         clearTimeout(t1);
         setTopicResult(res);
+        await refreshUser();
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : "Generation failed");
+        if (err instanceof ApiError && err.status === 402) {
+          setUpgradeReason("out_of_credits");
+          setShowUpgrade(true);
+        } else {
+          setError(err instanceof Error ? err.message : "Generation failed");
+        }
       } finally {
         setGenerationStep("idle");
       }
@@ -232,8 +249,14 @@ export function Create() {
         clearTimeout(t1);
         clearTimeout(t2);
         setResult(res);
+        await refreshUser();
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : "Generation failed");
+        if (err instanceof ApiError && err.status === 402) {
+          setUpgradeReason("out_of_credits");
+          setShowUpgrade(true);
+        } else {
+          setError(err instanceof Error ? err.message : "Generation failed");
+        }
       } finally {
         setGenerationStep("idle");
       }
@@ -294,6 +317,14 @@ export function Create() {
   return (
     <div className="min-h-screen bg-muted/20">
 
+      {/* Upgrade modal */}
+      {showUpgrade && (
+        <UpgradeModal
+          trigger={upgradeReason}
+          onClose={() => setShowUpgrade(false)}
+        />
+      )}
+
       {/* Top bar */}
       <header className="border-b bg-background/95 backdrop-blur sticky top-0 z-50">
         <div className="container mx-auto max-w-5xl px-4 flex h-14 items-center justify-between">
@@ -305,6 +336,22 @@ export function Create() {
           </div>
 
           <div className="flex items-center gap-1 sm:gap-2">
+            {/* Credits badge */}
+            {user && (
+              <button
+                onClick={() => { setUpgradeReason("upgrade_click"); setShowUpgrade(true); }}
+                className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-full border transition-colors ${
+                  user.credits === 0
+                    ? "bg-red-500/10 border-red-500/30 text-red-500 hover:bg-red-500/20"
+                    : user.credits <= 3
+                    ? "bg-amber-500/10 border-amber-500/30 text-amber-600 hover:bg-amber-500/20"
+                    : "bg-muted border-border text-muted-foreground hover:text-foreground hover:bg-muted/80"
+                }`}
+              >
+                <Coins className="w-3.5 h-3.5" />
+                {user.credits} credit{user.credits !== 1 ? "s" : ""}
+              </button>
+            )}
             <Link to="/scheduled" className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground px-2 py-1 rounded-md transition-colors">
               <CalendarClock className="w-4 h-4" />
               <span className="hidden sm:inline">Scheduled</span>

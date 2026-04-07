@@ -21,9 +21,15 @@ class UserOut(BaseModel):
     name: str
     email: str
     linkedin_url: Optional[str] = None
+    credits: int = 10
+    onboarding_complete: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class SuggestTopicsResponse(BaseModel):
+    topics: list[dict]   # [{topic, hook, why}]
 
 
 class Token(BaseModel):
@@ -85,18 +91,41 @@ class TopicResponse(BaseModel):
 
 # ── Persona ───────────────────────────────────────────────────────────────────
 
+class VoiceProfile(BaseModel):
+    """Structured writing style analysis produced by Gemini."""
+    summary: str = ""
+    hook_style: str = ""
+    tone: str = ""
+    tone_label: str = ""
+    sentence_style: str = ""
+    structure: str = ""
+    key_phrases: list[str] = []
+    formatting: str = ""
+    cta_style: str = ""
+
+
 class PersonaUpdate(BaseModel):
     linkedin_url: Optional[str] = None
-    sample_posts: list[str]   # 1-5 raw post strings pasted by the user
+    sample_posts: list[str]   # 1-5 raw post strings
 
 
 class PersonaOut(BaseModel):
     linkedin_url: Optional[str] = None
     sample_posts: list[str]
-    voice_profile: Optional[str] = None
+    voice_profile: Optional[VoiceProfile] = None   # structured (for UI display)
+    has_profile: bool = False
     updated_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
+
+
+class ScrapeLinkedinRequest(BaseModel):
+    profile_url: str
+
+
+class ScrapeLinkedinResponse(BaseModel):
+    posts: list[str]
+    error: str = ""
 
 
 # ── Schedule ──────────────────────────────────────────────────────────────────

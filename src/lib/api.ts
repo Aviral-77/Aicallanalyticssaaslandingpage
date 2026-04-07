@@ -4,6 +4,13 @@ function getToken(): string | null {
   return localStorage.getItem("repostai_token");
 }
 
+export class ApiError extends Error {
+  constructor(message: string, public status: number) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
@@ -16,7 +23,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const data = await res.json();
 
   if (!res.ok) {
-    throw new Error(data.detail ?? "Request failed");
+    throw new ApiError(data.detail ?? "Request failed", res.status);
   }
   return data as T;
 }
@@ -52,6 +59,12 @@ export const api = {
 
   getPersona: () => request<PersonaOut>("/persona/me"),
 
+  scrapeLinkedin: (profile_url: string) =>
+    request<ScrapeLinkedinResponse>("/persona/scrape-linkedin", {
+      method: "POST",
+      body: JSON.stringify({ profile_url }),
+    }),
+
   savePersona: (payload: PersonaUpdate) =>
     request<PersonaOut>("/persona/save", {
       method: "POST",
@@ -70,6 +83,12 @@ export const api = {
     request<ScheduledPostOut>(`/posts/scheduled/${id}/status?new_status=${new_status}`, {
       method: "PATCH",
     }),
+
+  completeOnboarding: () =>
+    request<{ ok: boolean }>("/auth/complete-onboarding", { method: "POST" }),
+
+  suggestTopics: () =>
+    request<{ topics: TopicSuggestion[] }>("/persona/suggest-topics"),
 };
 
 // Types mirroring backend schemas
@@ -78,7 +97,15 @@ export interface User {
   name: string;
   email: string;
   linkedin_url?: string;
+  credits: number;
+  onboarding_complete: boolean;
   created_at: string;
+}
+
+export interface TopicSuggestion {
+  topic: string;
+  hook: string;
+  why: string;
 }
 
 export interface RepurposeRequest {
@@ -133,11 +160,29 @@ export interface PersonaUpdate {
   sample_posts: string[];
 }
 
+export interface VoiceProfile {
+  summary: string;
+  hook_style: string;
+  tone: string;
+  tone_label: string;
+  sentence_style: string;
+  structure: string;
+  key_phrases: string[];
+  formatting: string;
+  cta_style: string;
+}
+
 export interface PersonaOut {
   linkedin_url?: string;
   sample_posts: string[];
-  voice_profile?: string;
+  voice_profile?: VoiceProfile;
+  has_profile: boolean;
   updated_at?: string;
+}
+
+export interface ScrapeLinkedinResponse {
+  posts: string[];
+  error: string;
 }
 
 export interface SchedulePostRequest {
