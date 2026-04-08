@@ -83,7 +83,7 @@ def _parse_json(raw: str) -> dict:
         return {}
 
 
-def voice_prompt_block(voice_profile_json: str) -> str:
+def voice_prompt_block(voice_profile_json: str, user_name: str = "") -> str:
     """
     Convert the stored JSON voice profile into a natural-language style guide
     for injection into generation prompts.
@@ -92,12 +92,14 @@ def voice_prompt_block(voice_profile_json: str) -> str:
     if not voice_profile_json:
         return ""
 
+    name_label = f"{user_name}'s" if user_name else "this user's"
+
     try:
         profile = json.loads(voice_profile_json)
     except (json.JSONDecodeError, TypeError):
         # Legacy plain-text profile — inject as-is
         return (
-            "\n\nCRITICAL — Match this user's personal writing voice exactly:\n"
+            f"\n\nCRITICAL — Match {name_label} personal writing voice exactly:\n"
             f"{voice_profile_json}\n"
             "Prioritise their voice over the general tone instruction above.\n"
         )
@@ -106,7 +108,7 @@ def voice_prompt_block(voice_profile_json: str) -> str:
         return ""
 
     lines = [
-        "\n\nCRITICAL — Write in this specific user's voice. Match it exactly:",
+        f"\n\nCRITICAL — Write in {name_label} voice. Match it exactly:",
         f"Overall voice: {profile.get('summary', '')}",
         f"Hook style: {profile.get('hook_style', '')}",
         f"Sentence style: {profile.get('sentence_style', '')}",
