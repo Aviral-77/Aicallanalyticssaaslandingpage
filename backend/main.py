@@ -219,14 +219,14 @@ def _deduct_credit(user: models.User, db: Session) -> None:
     db.commit()
 
 
-def _get_user_voice(user_id: int, db: Session) -> str:
+def _get_user_voice(user_id: int, db: Session, user_name: str = "") -> str:
     """Return the prompt-ready voice block for a user, or '' if none."""
     persona = db.query(models.UserPersona).filter(
         models.UserPersona.user_id == user_id
     ).first()
     if not persona or not persona.voice_profile:
         return ""
-    return voice_prompt_block(persona.voice_profile)
+    return voice_prompt_block(persona.voice_profile, user_name=user_name)
 
 
 def _persona_to_out(persona: models.UserPersona) -> schemas.PersonaOut:
@@ -410,7 +410,7 @@ async def repurpose_content(
     search_context = format_search_context(search_results)
 
     # ── Step 3: Generate 3 versions concurrently ───────────────────────────────
-    user_voice = _get_user_voice(current_user.id, db)
+    user_voice = _get_user_voice(current_user.id, db, user_name=current_user.name)
     try:
         versions = await generate_post(
             content=extracted.content,
@@ -538,7 +538,7 @@ async def from_topic(
     research = await research_topic(body.topic)
 
     # ── Step 2: Generate post versions + carousel in parallel ──────────────────
-    user_voice = _get_user_voice(current_user.id, db)
+    user_voice = _get_user_voice(current_user.id, db, user_name=current_user.name)
     try:
         versions, carousel_slides = await generate_from_topic(
             topic=body.topic,

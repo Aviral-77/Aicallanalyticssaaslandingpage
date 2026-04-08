@@ -27,6 +27,7 @@ import {
   Target,
   RefreshCw,
   User,
+  ClipboardPaste,
 } from "lucide-react";
 
 // ── Tone badge colours ─────────────────────────────────────────────────────────
@@ -39,8 +40,9 @@ const TONE_COLORS: Record<string, string> = {
 };
 
 // ── Voice profile card ─────────────────────────────────────────────────────────
-function VoiceProfileCard({ profile }: { profile: VoiceProfile }) {
+function VoiceProfileCard({ profile, userName }: { profile: VoiceProfile; userName: string }) {
   const toneClass = TONE_COLORS[profile.tone] ?? "bg-gray-100 text-gray-700 border-gray-200";
+  const firstName = userName.split(" ")[0];
 
   const sections = [
     { icon: Zap,          label: "Hook Style",    value: profile.hook_style    },
@@ -59,7 +61,7 @@ function VoiceProfileCard({ profile }: { profile: VoiceProfile }) {
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap mb-1">
-            <h3 className="font-bold text-gray-900 text-base">Your Voice Profile</h3>
+            <h3 className="font-bold text-gray-900 text-base">{firstName}'s Voice Profile</h3>
             <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${toneClass}`}>
               {profile.tone_label || profile.tone}
             </span>
@@ -103,7 +105,7 @@ function VoiceProfileCard({ profile }: { profile: VoiceProfile }) {
 
       <p className="text-xs text-gray-400 flex items-center gap-1">
         <Sparkles className="w-3 h-3" />
-        Active — all generated posts will match this voice
+        Active — all generated posts will match {firstName}'s voice
       </p>
     </div>
   );
@@ -182,6 +184,9 @@ export function Settings() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
+  // "linkedin" = scrape tab, "paste" = manual paste tab
+  const [inputTab, setInputTab] = useState<"linkedin" | "paste">("linkedin");
+
   const [linkedinUrl, setLinkedinUrl] = useState("");
   const [posts, setPosts] = useState<string[]>(["", "", ""]);
   const [persona, setPersona] = useState<PersonaOut | null>(null);
@@ -206,6 +211,10 @@ export function Settings() {
           const padded = [...p.sample_posts];
           while (padded.length < 3) padded.push("");
           setPosts(padded);
+          // If they already have pasted posts but no linkedin URL, start on paste tab
+          if (!p.linkedin_url && p.sample_posts.some((s) => s.trim())) {
+            setInputTab("paste");
+          }
         }
       })
       .catch(() => {})
@@ -222,7 +231,7 @@ export function Settings() {
       if (res.error) {
         setScrapeError(res.error);
       } else if (res.posts.length === 0) {
-        setScrapeError("No posts found on this profile. Try pasting them manually.");
+        setScrapeError("No posts found on this profile. Try pasting them manually instead.");
       } else {
         const padded = [...res.posts];
         while (padded.length < 3) padded.push("");
@@ -307,8 +316,7 @@ export function Settings() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Voice Settings</h1>
             <p className="text-gray-500 mt-1 text-sm leading-relaxed">
-              Link your LinkedIn profile to auto-import your recent posts, or paste them manually.
-              Repost AI analyses your writing style and matches it in every generated post.
+              Import posts from LinkedIn or paste them manually. Repost AI analyses your writing style and matches it in every generated post.
             </p>
           </div>
         </div>
@@ -327,119 +335,143 @@ export function Settings() {
             {persona?.voice_profile && (
               <Card className="border-0 shadow-md bg-gradient-to-br from-white to-blue-50/60 overflow-hidden">
                 <CardContent className="p-6">
-                  <VoiceProfileCard profile={persona.voice_profile} />
+                  <VoiceProfileCard profile={persona.voice_profile} userName={user?.name ?? "You"} />
                 </CardContent>
                 <div className="h-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500" />
               </Card>
             )}
 
-            {/* ── LinkedIn section ───────────────────────────────────────────── */}
-            <Card className="border border-gray-200 shadow-sm">
+            {/* ── Input method tabs ──────────────────────────────────────────── */}
+            <Card className="border border-gray-200 shadow-sm overflow-hidden">
+              {/* Tab bar */}
+              <div className="flex border-b border-gray-200">
+                <button
+                  onClick={() => setInputTab("linkedin")}
+                  className={`flex items-center gap-2 flex-1 py-3 px-4 text-sm font-medium transition-colors ${
+                    inputTab === "linkedin"
+                      ? "bg-white text-blue-700 border-b-2 border-blue-600"
+                      : "bg-gray-50 text-gray-500 hover:text-gray-700"
+                  }`}
+                >
+                  <Linkedin className="w-4 h-4" />
+                  Import from LinkedIn
+                </button>
+                <button
+                  onClick={() => setInputTab("paste")}
+                  className={`flex items-center gap-2 flex-1 py-3 px-4 text-sm font-medium transition-colors ${
+                    inputTab === "paste"
+                      ? "bg-white text-primary border-b-2 border-primary"
+                      : "bg-gray-50 text-gray-500 hover:text-gray-700"
+                  }`}
+                >
+                  <ClipboardPaste className="w-4 h-4" />
+                  Paste Posts Manually
+                </button>
+              </div>
+
               <CardContent className="p-6 space-y-4">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center">
-                    <Linkedin className="w-4 h-4 text-white" />
-                  </div>
-                  <div>
-                    <h2 className="text-sm font-bold text-gray-900">LinkedIn Profile</h2>
-                    <p className="text-xs text-gray-500">Paste your URL to auto-import recent posts</p>
-                  </div>
-                </div>
+                {/* LinkedIn tab */}
+                {inputTab === "linkedin" && (
+                  <div className="space-y-4">
+                    <p className="text-xs text-gray-500 leading-relaxed">
+                      Paste your LinkedIn profile URL and we'll try to auto-import your recent posts. If your profile is private, switch to the manual tab instead.
+                    </p>
+                    <div className="flex gap-2">
+                      <Input
+                        type="url"
+                        placeholder="https://linkedin.com/in/yourhandle"
+                        value={linkedinUrl}
+                        onChange={(e) => setLinkedinUrl(e.target.value)}
+                        className="flex-1"
+                        onKeyDown={(e) => e.key === "Enter" && handleScrape()}
+                      />
+                      <Button
+                        variant="outline"
+                        onClick={handleScrape}
+                        disabled={!linkedinUrl.trim() || isScraping}
+                        className="gap-2 border-blue-200 text-blue-700 hover:bg-blue-50 flex-shrink-0"
+                      >
+                        {isScraping ? (
+                          <><Loader2 className="w-4 h-4 animate-spin" />Scraping…</>
+                        ) : scrapeSuccess ? (
+                          <><CheckCheck className="w-4 h-4 text-green-500" />Imported!</>
+                        ) : (
+                          <><Download className="w-4 h-4" />Import Posts</>
+                        )}
+                      </Button>
+                    </div>
 
-                <div className="flex gap-2">
-                  <Input
-                    type="url"
-                    placeholder="https://linkedin.com/in/yourhandle"
-                    value={linkedinUrl}
-                    onChange={(e) => setLinkedinUrl(e.target.value)}
-                    className="flex-1"
-                    onKeyDown={(e) => e.key === "Enter" && handleScrape()}
-                  />
-                  <Button
-                    variant="outline"
-                    onClick={handleScrape}
-                    disabled={!linkedinUrl.trim() || isScraping}
-                    className="gap-2 border-blue-200 text-blue-700 hover:bg-blue-50 flex-shrink-0"
-                  >
-                    {isScraping ? (
-                      <><Loader2 className="w-4 h-4 animate-spin" />Scraping…</>
-                    ) : scrapeSuccess ? (
-                      <><CheckCheck className="w-4 h-4 text-green-500" />Imported!</>
-                    ) : (
-                      <><Download className="w-4 h-4" />Import Posts</>
+                    {scrapeError && (
+                      <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 text-amber-800 text-xs px-4 py-3 rounded-xl">
+                        <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-500" />
+                        <span>{scrapeError} — <button onClick={() => setInputTab("paste")} className="underline font-medium">paste posts manually</button></span>
+                      </div>
                     )}
-                  </Button>
-                </div>
 
-                {scrapeError && (
-                  <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 text-amber-800 text-xs px-4 py-3 rounded-xl">
-                    <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-500" />
-                    <span>{scrapeError}</span>
+                    {scrapeSuccess && (
+                      <div className="flex items-center gap-2 bg-green-50 border border-green-200 text-green-700 text-xs px-4 py-3 rounded-xl">
+                        <CheckCheck className="w-4 h-4" />
+                        <span>Imported {posts.filter((p) => p.trim()).length} posts! Review them in the Paste Posts tab, then click Analyse.</span>
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {scrapeSuccess && (
-                  <div className="flex items-center gap-2 bg-green-50 border border-green-200 text-green-700 text-xs px-4 py-3 rounded-xl">
-                    <CheckCheck className="w-4 h-4" />
-                    <span>Successfully imported {posts.filter((p) => p.trim()).length} posts! Review them below.</span>
+                {/* Paste posts tab */}
+                {inputTab === "paste" && (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-gray-700">
+                          Sample Posts
+                          {filledCount > 0 && (
+                            <span className="ml-2 text-xs font-normal text-gray-400">{filledCount} added</span>
+                          )}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          Copy-paste 3–5 of your best LinkedIn posts. More examples = better voice match.
+                        </p>
+                      </div>
+                      {persona?.has_profile && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-xs text-gray-400 gap-1"
+                          onClick={handleSave}
+                          disabled={isSaving}
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                          Re-analyse
+                        </Button>
+                      )}
+                    </div>
+
+                    <div className="space-y-3">
+                      {posts.map((post, i) => (
+                        <PostCard
+                          key={i}
+                          index={i}
+                          value={post}
+                          onChange={(v) => updatePost(i, v)}
+                          onRemove={() => removePost(i)}
+                          canRemove={posts.length > 1}
+                        />
+                      ))}
+                    </div>
+
+                    {posts.length < 6 && (
+                      <button
+                        onClick={addPost}
+                        className="w-full flex items-center justify-center gap-2 py-3 border-2 border-dashed border-gray-200 rounded-xl text-sm text-gray-400 hover:border-primary/40 hover:text-primary transition-colors"
+                      >
+                        <Plus className="w-4 h-4" />
+                        Add another post
+                      </button>
+                    )}
                   </div>
                 )}
               </CardContent>
             </Card>
-
-            {/* ── Posts section ─────────────────────────────────────────────── */}
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-sm font-bold text-gray-900">
-                    Sample Posts
-                    {filledCount > 0 && (
-                      <span className="ml-2 text-xs font-normal text-gray-400">
-                        {filledCount} added
-                      </span>
-                    )}
-                  </h2>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    Add 3-5 posts you've written. More = better voice match.
-                  </p>
-                </div>
-                {persona?.has_profile && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-xs text-gray-400 gap-1"
-                    onClick={handleSave}
-                    disabled={isSaving}
-                  >
-                    <RefreshCw className="w-3 h-3" />
-                    Re-analyse
-                  </Button>
-                )}
-              </div>
-
-              <div className="space-y-3">
-                {posts.map((post, i) => (
-                  <PostCard
-                    key={i}
-                    index={i}
-                    value={post}
-                    onChange={(v) => updatePost(i, v)}
-                    onRemove={() => removePost(i)}
-                    canRemove={posts.length > 1}
-                  />
-                ))}
-              </div>
-
-              {posts.length < 6 && (
-                <button
-                  onClick={addPost}
-                  className="w-full flex items-center justify-center gap-2 py-3 border-2 border-dashed border-gray-200 rounded-xl text-sm text-gray-400 hover:border-primary/40 hover:text-primary transition-colors"
-                >
-                  <Plus className="w-4 h-4" />
-                  Add another post
-                </button>
-              )}
-            </div>
 
             {/* ── Save / analyse ─────────────────────────────────────────────── */}
             {saveError && (
